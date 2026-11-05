@@ -89,6 +89,11 @@ name = "safe-slate-recommender"
 version = "0.3.0"
 source = { editable = "." }
 
+[package.optional-dependencies]
+test = [
+    { name = "pytest" },
+]
+
 [package.dev-dependencies]
 dev = [
     { name = "maturin" },
@@ -96,6 +101,8 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [{ name = "pytest", marker = "extra == 'test'", specifier = ">=8.4,<10" }]
+provides-extras = ["test"]
 
 [package.metadata.requires-dev]
 dev = [

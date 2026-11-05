@@ -17,7 +17,7 @@
   "typed": true,
   "supports_papers": ["certified-reranking-systems", "certified-slate-oracle"],
   "source_revision": "1a8b4290755f00c1fb78a69602af336ebe7e7742",
-  "install_extras": [],
+  "install_extras": ["test"],
   "test_commands": [["python", "-m", "pytest", "-q"]],
   "typecheck_commands": [["python", "-m", "compileall", "-q", "python/safe_slate"]],
   "native_backend": true,

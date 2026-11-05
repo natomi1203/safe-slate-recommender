@@ -16,6 +16,9 @@ classifiers = [
 ]
 dependencies = []
 
+[project.optional-dependencies]
+test = ["pytest>=8.4,<10"]
+
 [project.scripts]
 safe-slate-freeze-inputs = "safe_slate.external_intake:main"
 
