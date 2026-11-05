@@ -4,8 +4,8 @@
   "distribution_name": "safe-slate-recommender",
   "package_root": "safe-slate-recommender",
   "status": "development",
-  "python_requires": ">=3.12",
-  "python_versions": ["3.12", "3.13"],
+  "python_requires": ">=3.15",
+  "python_versions": ["3.15"],
   "public_api": [
     "safe_slate.optimize_slate",
     "safe_slate.optimize_replacements",
