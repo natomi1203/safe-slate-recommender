@@ -29,25 +29,21 @@ def _aware_time(value: str, field: str) -> datetime:
 
 
 def _positive_real(value: object, field: str) -> float:
-    if (
-        not isinstance(value, Real)
-        or isinstance(value, bool)
-        or not isfinite(value)
-        or value <= 0.0
-    ):
+    if not isinstance(value, Real) or isinstance(value, bool) or not isfinite(value):
         raise ValueError(f"{field} must be finite and positive")
-    return float(value)
+    normalized = float(value)
+    if normalized <= 0.0:
+        raise ValueError(f"{field} must be finite and positive")
+    return normalized
 
 
 def _rate(value: object, field: str) -> float:
-    if (
-        not isinstance(value, Real)
-        or isinstance(value, bool)
-        or not isfinite(value)
-        or not 0.0 <= value <= 1.0
-    ):
+    if not isinstance(value, Real) or isinstance(value, bool) or not isfinite(value):
         raise ValueError(f"{field} must be finite and in [0, 1]")
-    return float(value)
+    normalized = float(value)
+    if not 0.0 <= normalized <= 1.0:
+        raise ValueError(f"{field} must be finite and in [0, 1]")
+    return normalized
 
 
 def _positive_integer(value: object, field: str) -> int:

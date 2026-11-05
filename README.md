@@ -10,6 +10,14 @@ partial-support and propensity-interval value bounds, observation-propensity
 adjustment for missing settled outcomes, and finite-cell sample-split
 calibration.
 
+Start with the [quickstart](docs/quickstart.md). The
+[public API reference](docs/api-reference.md),
+[compatibility policy](docs/compatibility.md), and
+[research integration boundary](docs/research-integration.md) define the
+supported surface and its claim limits. Maintainers should use the
+[release checklist](RELEASE_CHECKLIST.md) and current
+[PyPI readiness assessment](PYPI_READINESS.md); neither authorizes publication.
+
 ## Development
 
 ```bash

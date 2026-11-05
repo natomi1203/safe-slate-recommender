@@ -2,6 +2,20 @@
 
 ## 0.3.0
 
+- Added a documented seven-symbol stable API boundary, promoting the measured
+  serving-gate assessor and candidate-pool facade alongside the existing core,
+  plus a beginner quickstart, compatibility and wheel policy, research-
+  integration classification, security guidance, and a no-authorization
+  release checklist.
+- Hardened production input validation so coercible strings, booleans used as
+  integers, non-finite values, negative variances, and non-boolean raw serving
+  gates cannot cross a fail-closed boundary.
+- Added deterministic randomized oracle invariants and manifest-backed public
+  API contract tests, plus locked Rust tests and warning-free Clippy to the
+  software CI contract. The full Python package passes mypy, and native stubs
+  are checked against the installed extension with `mypy.stubtest`.
+- Included the package-local license in built distributions and expanded PyPI
+  metadata for supported audiences, platforms, documentation, and issue links.
 - Added strict bounded intake for the production Go service's
   `safe-slate-production-post-response-1.1` sidecar. It verifies nanosecond
   chronology and payload sizes, rejects duplicate identities and schema drift,

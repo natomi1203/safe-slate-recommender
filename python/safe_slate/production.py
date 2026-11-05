@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from math import ceil, isfinite
+from numbers import Integral, Real
 from time import perf_counter
 from typing import Any, Literal, Mapping, Sequence
 
@@ -300,6 +301,98 @@ class GuardedRerankResult:
     proposal_log: ProposalLog
 
 
+def _strict_nonnegative_int(value: object, field: str) -> int:
+    if not isinstance(value, Integral) or isinstance(value, bool) or value < 0:
+        raise ValueError(f"{field} must be a nonnegative integer")
+    return int(value)
+
+
+def _strict_bool(value: object, field: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{field} must be a boolean")
+    return value
+
+
+def _strict_real(value: object, field: str, *, nonnegative: bool = False) -> float:
+    if (
+        not isinstance(value, Real)
+        or isinstance(value, bool)
+        or not isfinite(value)
+        or (nonnegative and value < 0.0)
+    ):
+        qualifier = "finite and nonnegative" if nonnegative else "finite"
+        raise ValueError(f"{field} must be {qualifier}")
+    return float(value)
+
+
+def _strict_int_sequence(
+    values: Sequence[int],
+    field: str,
+    *,
+    unique: bool = False,
+) -> tuple[int, ...]:
+    normalized = tuple(_strict_nonnegative_int(value, field) for value in values)
+    if unique and len(set(normalized)) != len(normalized):
+        raise ValueError(f"{field} must contain unique values")
+    return normalized
+
+
+def _strict_signed_int_sequence(
+    values: Sequence[int],
+    field: str,
+) -> tuple[int, ...]:
+    normalized: list[int] = []
+    for value in values:
+        if not isinstance(value, Integral) or isinstance(value, bool):
+            raise ValueError(f"{field} must contain integers")
+        normalized.append(int(value))
+    return tuple(normalized)
+
+
+def _strict_caps(values: Mapping[int, int], field: str) -> dict[int, int]:
+    normalized: dict[int, int] = {}
+    for key, value in values.items():
+        if not isinstance(key, Integral) or isinstance(key, bool):
+            raise ValueError(f"{field} keys must be integers")
+        normalized[int(key)] = _strict_nonnegative_int(value, field)
+    return normalized
+
+
+def _strict_index_pairs(
+    values: Sequence[tuple[int, int]],
+    field: str,
+) -> tuple[tuple[int, int], ...]:
+    normalized: list[tuple[int, int]] = []
+    for pair in values:
+        if len(pair) != 2:
+            raise ValueError(f"{field} entries must contain two indices")
+        normalized.append(
+            (
+                _strict_nonnegative_int(pair[0], field),
+                _strict_nonnegative_int(pair[1], field),
+            )
+        )
+    return tuple(normalized)
+
+
+def _strict_real_sequence(
+    values: Sequence[float],
+    field: str,
+    *,
+    nonnegative: bool = False,
+) -> tuple[float, ...]:
+    return tuple(
+        _strict_real(value, field, nonnegative=nonnegative) for value in values
+    )
+
+
+def _strict_real_matrix(
+    rows: Sequence[Sequence[float]],
+    field: str,
+) -> tuple[tuple[float, ...], ...]:
+    return tuple(_strict_real_sequence(row, field) for row in rows)
+
+
 def _gate_reason(
     *,
     support_ok: bool,
@@ -392,10 +485,13 @@ def guarded_rerank(
             raise ValueError("event_timestamp must be ISO-8601") from error
         if parsed_timestamp.tzinfo is None or parsed_timestamp.utcoffset() is None:
             raise ValueError("event_timestamp must include a timezone")
-    if not isinstance(max_replacements, int) or max_replacements < 0:
-        raise ValueError("max_replacements must be a nonnegative integer")
-    if not isinstance(timeout_ms, int) or timeout_ms < 0:
-        raise ValueError("timeout_ms must be a nonnegative integer")
+    max_replacements = _strict_nonnegative_int(max_replacements, "max_replacements")
+    timeout_ms = _strict_nonnegative_int(timeout_ms, "timeout_ms")
+    protected_count = _strict_nonnegative_int(protected_count, "protected_count")
+    beam_width = _strict_nonnegative_int(beam_width, "beam_width")
+    max_expansions = _strict_nonnegative_int(max_expansions, "max_expansions")
+    if beam_width == 0 or max_expansions == 0:
+        raise ValueError("beam_width and max_expansions must be positive integers")
     if serving_mode not in {"serve", "shadow"}:
         raise ValueError("serving_mode must be 'serve' or 'shadow'")
     if serving_mode == "shadow" and event_timestamp is None:
@@ -404,20 +500,73 @@ def guarded_rerank(
         gate_assessment, ServingGateAssessment
     ):
         raise ValueError("gate_assessment must be a ServingGateAssessment")
-    if not isfinite(baseline_metric) or not 0.0 <= baseline_metric <= 1.0:
+    baseline_metric = _strict_real(baseline_metric, "baseline_metric")
+    degradation_tolerance = _strict_real(
+        degradation_tolerance, "degradation_tolerance"
+    )
+    confidence_radius = _strict_real(
+        confidence_radius, "confidence_radius", nonnegative=True
+    )
+    if not 0.0 <= baseline_metric <= 1.0:
         raise ValueError("baseline_metric must be finite and in [0, 1]")
-    if not isfinite(degradation_tolerance) or not 0.0 <= degradation_tolerance < 1.0:
+    if not 0.0 <= degradation_tolerance < 1.0:
         raise ValueError("degradation_tolerance must be finite and in [0, 1)")
+    if model_version is not None and (
+        not isinstance(model_version, str) or not model_version
+    ):
+        raise ValueError("model_version must be a non-empty string or None")
+    if context is not None and not isinstance(context, Mapping):
+        raise ValueError("context must be a mapping or None")
 
-    baseline = tuple(int(item) for item in baseline_item_ids)
-    removes = tuple(int(position) for position in remove_positions)
-    additions = tuple(int(item) for item in add_item_ids)
-    rewards = tuple(float(value) for value in reward_deltas)
-    means = tuple(float(value) for value in safety_mean_deltas)
-    variances = tuple(float(value) for value in safety_variances)
+    baseline = _strict_int_sequence(
+        baseline_item_ids, "baseline_item_ids", unique=True
+    )
+    removes = _strict_int_sequence(remove_positions, "remove_positions")
+    additions = _strict_int_sequence(add_item_ids, "add_item_ids")
+    rewards = _strict_real_sequence(reward_deltas, "reward_deltas")
+    means = _strict_real_sequence(safety_mean_deltas, "safety_mean_deltas")
+    variances = _strict_real_sequence(
+        safety_variances, "safety_variances", nonnegative=True
+    )
     covariance_rows = (
-        tuple(tuple(float(value) for value in row) for row in covariance)
+        _strict_real_matrix(covariance, "covariance")
         if covariance is not None
+        else None
+    )
+    if protected_count > len(baseline):
+        raise ValueError("protected_count cannot exceed the baseline size")
+    if gate_assessment is None:
+        support_ok = _strict_bool(support_ok, "support_ok")
+        uncertainty_valid = _strict_bool(uncertainty_valid, "uncertainty_valid")
+        distribution_shift_detected = _strict_bool(
+            distribution_shift_detected, "distribution_shift_detected"
+        )
+        proposal_log_complete = _strict_bool(
+            proposal_log_complete, "proposal_log_complete"
+        )
+    normalized_remove_group_ids = (
+        _strict_signed_int_sequence(remove_group_ids, "remove_group_ids")
+        if remove_group_ids is not None
+        else None
+    )
+    normalized_add_group_ids = (
+        _strict_signed_int_sequence(add_group_ids, "add_group_ids")
+        if add_group_ids is not None
+        else None
+    )
+    normalized_remove_group_caps = (
+        _strict_caps(remove_group_caps, "remove_group_caps")
+        if remove_group_caps is not None
+        else None
+    )
+    normalized_add_group_caps = (
+        _strict_caps(add_group_caps, "add_group_caps")
+        if add_group_caps is not None
+        else None
+    )
+    normalized_operation_conflicts = (
+        _strict_index_pairs(operation_conflicts, "operation_conflicts")
+        if operation_conflicts is not None
         else None
     )
     if gate_assessment is not None:
@@ -465,15 +614,27 @@ def guarded_rerank(
         ),
         baseline_item_ids=list(baseline),
         remove_group_ids=(
-            list(remove_group_ids) if remove_group_ids is not None else None
+            list(normalized_remove_group_ids)
+            if normalized_remove_group_ids is not None
+            else None
         ),
         remove_group_caps=(
-            dict(remove_group_caps) if remove_group_caps is not None else None
+            normalized_remove_group_caps
+            if normalized_remove_group_caps is not None
+            else None
         ),
-        add_group_ids=(list(add_group_ids) if add_group_ids is not None else None),
-        add_group_caps=(dict(add_group_caps) if add_group_caps is not None else None),
+        add_group_ids=(
+            list(normalized_add_group_ids)
+            if normalized_add_group_ids is not None
+            else None
+        ),
+        add_group_caps=(
+            normalized_add_group_caps if normalized_add_group_caps is not None else None
+        ),
         operation_conflicts=(
-            list(operation_conflicts) if operation_conflicts is not None else None
+            list(normalized_operation_conflicts)
+            if normalized_operation_conflicts is not None
+            else None
         ),
         beam_width=beam_width,
         max_expansions=max_expansions,

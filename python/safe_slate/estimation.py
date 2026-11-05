@@ -539,11 +539,14 @@ def _validate_evaluation_contract_binding(
     mismatched = [
         name for name, (actual, frozen) in frozen_pairs.items() if actual != frozen
     ]
-    if outcome_lower_bound is not None and (
-        float(outcome_lower_bound) != contract.outcome_lower_bound
-        or float(outcome_upper_bound) != contract.outcome_upper_bound
-    ):
-        mismatched.append("outcome_bounds")
+    if outcome_lower_bound is not None:
+        if outcome_upper_bound is None:
+            mismatched.append("outcome_bounds")
+        elif (
+            float(outcome_lower_bound) != contract.outcome_lower_bound
+            or float(outcome_upper_bound) != contract.outcome_upper_bound
+        ):
+            mismatched.append("outcome_bounds")
     if mismatched:
         raise ValueError(
             "estimation settings differ from the frozen contract: "
@@ -606,7 +609,7 @@ def estimate_cross_fitted_policy_value(
         bootstrap_seed=bootstrap_seed,
         confidence_level=confidence_level,
     )
-    attestations = {
+    attestations: dict[str, bool | None] = {
         "nuisance_predictions_cross_fitted": nuisance_predictions_cross_fitted,
         "logging_propensities_are_request_time_probabilities": (
             logging_propensities_are_request_time_probabilities
@@ -860,7 +863,7 @@ def estimate_partial_identification_bounds(
         outcome_lower_bound=outcome_lower_bound,
         outcome_upper_bound=outcome_upper_bound,
     )
-    attestations = {
+    attestations: dict[str, bool | None] = {
         "nuisance_predictions_cross_fitted": nuisance_predictions_cross_fitted,
         "logging_propensities_are_request_time_probabilities": (
             logging_propensities_are_request_time_probabilities
@@ -1806,7 +1809,7 @@ def estimate_joint_uncertainty_bounds(
         outcome_lower_bound=outcome_lower_bound,
         outcome_upper_bound=outcome_upper_bound,
     )
-    attestations = {
+    attestations: dict[str, bool | None] = {
         "nuisance_predictions_cross_fitted": nuisance_predictions_cross_fitted,
         "propensity_evidence_is_request_time": propensity_evidence_is_request_time,
         "observation_propensities_are_validated": (

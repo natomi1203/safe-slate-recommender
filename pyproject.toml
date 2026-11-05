@@ -9,26 +9,36 @@ description = "Certified anytime slate construction backed by Rust"
 readme = "README.md"
 requires-python = ">=3.15"
 license = "CC-BY-4.0"
+license-files = ["LICENSE"]
+keywords = ["recommender-systems", "safe-optimization", "slate-ranking", "rust"]
 classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Intended Audience :: Science/Research",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.15",
   "Programming Language :: Rust",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
   "Typing :: Typed",
 ]
 dependencies = []
 
 [project.optional-dependencies]
-test = ["pytest>=8.4,<10"]
+test = ["mypy>=2.4,<3", "pytest>=8.4,<10"]
 
 [project.scripts]
 safe-slate-freeze-inputs = "safe_slate.external_intake:main"
 
 [project.urls]
 Repository = "https://github.com/natomi1203/purchase-aware-retrieval-research"
+Documentation = "https://github.com/natomi1203/purchase-aware-retrieval-research/tree/main/safe-slate-recommender/docs"
+Changelog = "https://github.com/natomi1203/purchase-aware-retrieval-research/blob/main/safe-slate-recommender/CHANGELOG.md"
+Issues = "https://github.com/natomi1203/purchase-aware-retrieval-research/issues"
 
 [dependency-groups]
 dev = [
   "maturin>=1.16,<2",
+  "mypy>=2.4,<3",
   "pytest>=8.4,<10",
 ]
 

@@ -9,7 +9,9 @@
   "public_api": [
     "safe_slate.optimize_slate",
     "safe_slate.optimize_replacements",
+    "safe_slate.assess_serving_gates",
     "safe_slate.guarded_rerank",
+    "safe_slate.guarded_candidate_pool_rerank",
     "safe_slate.audit_ope_readiness",
     "safe_slate.run_no_clobber_ope"
   ],
@@ -18,8 +20,16 @@
   "supports_papers": ["certified-reranking-systems", "certified-slate-oracle"],
   "source_revision": "1a8b4290755f00c1fb78a69602af336ebe7e7742",
   "install_extras": ["test"],
-  "test_commands": [["python", "-m", "pytest", "-q"]],
-  "typecheck_commands": [["python", "-m", "compileall", "-q", "python/safe_slate"]],
+  "test_commands": [
+    ["python", "-m", "pytest", "-q"],
+    ["cargo", "test", "--locked", "--all-targets"],
+    ["cargo", "clippy", "--locked", "--all-targets", "--", "-D", "warnings"]
+  ],
+  "typecheck_commands": [
+    ["python", "-m", "compileall", "-q", "python/safe_slate"],
+    ["python", "-m", "mypy", "python/safe_slate", "--check-untyped-defs"],
+    ["python", "-m", "mypy.stubtest", "safe_slate._core"]
+  ],
   "native_backend": true,
   "native_parity_commands": [
     ["python", "-m", "pytest", "-q", "tests/test_api.py", "tests/test_uncertainty_binding.py"]

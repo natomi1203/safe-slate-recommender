@@ -10,3 +10,7 @@ interfaces.  It does not contain a paper, theorem ownership, or fixed
 paper-specific result.  Publication PRs pin a future merged software revision;
 their paper-specific simulations and immutable aggregate results remain with
 the paper.
+
+The three-way extraction decision and the excluded research topics are
+recorded in `docs/research-integration.md`. That document is a software scope
+map, not a publication result.

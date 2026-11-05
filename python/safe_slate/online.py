@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from math import ceil, isfinite
+from numbers import Real
 from time import perf_counter
 from typing import Any, Literal, Mapping, Sequence
 
@@ -42,10 +43,16 @@ class CandidatePoolOperations:
 def _finite_values(name: str, values: Sequence[float], expected: int) -> tuple[float, ...]:
     if len(values) != expected:
         raise ValueError(f"{name} has length {len(values)}, expected {expected}")
-    normalized = tuple(float(value) for value in values)
-    if any(not isfinite(value) for value in normalized):
-        raise ValueError(f"{name} contains NaN or infinity")
-    return normalized
+    normalized: list[float] = []
+    for value in values:
+        if (
+            not isinstance(value, Real)
+            or isinstance(value, bool)
+            or not isfinite(value)
+        ):
+            raise ValueError(f"{name} must contain finite real numbers")
+        normalized.append(float(value))
+    return tuple(normalized)
 
 
 def _item_ids(name: str, values: Sequence[int]) -> tuple[int, ...]:
@@ -73,10 +80,16 @@ def _feature_rows(
             raise ValueError(
                 f"{name} row {row_index} has length {len(row)}, expected {dimension}"
             )
-        values = tuple(float(value) for value in row)
-        if any(not isfinite(value) for value in values):
-            raise ValueError(f"{name} contains NaN or infinity")
-        normalized.append(values)
+        values: list[float] = []
+        for value in row:
+            if (
+                not isinstance(value, Real)
+                or isinstance(value, bool)
+                or not isfinite(value)
+            ):
+                raise ValueError(f"{name} must contain finite real numbers")
+            values.append(float(value))
+        normalized.append(tuple(values))
     return tuple(normalized)
 
 
@@ -285,7 +298,10 @@ def build_candidate_pool_operations(
             left_operation = left_position * len(candidates) + left_candidate
             for right_position in range(len(replaceable_positions)):
                 right_operation = right_position * len(candidates) + right_candidate
-                edge = tuple(sorted((left_operation, right_operation)))
+                edge = (
+                    min(left_operation, right_operation),
+                    max(left_operation, right_operation),
+                )
                 if edge[0] != edge[1]:
                     compiled_conflicts.add(edge)
                     if len(compiled_conflicts) > max_compiled_conflicts:

@@ -135,7 +135,7 @@ def _estimate(
         estimation_evidence, "propensity_evidence_is_request_time"
     )
     outcomes_match = _attestation(estimation_evidence, "outcomes_match_logged_actions")
-    bootstrap = {
+    bootstrap: dict[str, Any] = {
         "bootstrap_repetitions": contract.bootstrap_repetitions,
         "bootstrap_seed": contract.bootstrap_seed,
         "confidence_level": contract.confidence_level,

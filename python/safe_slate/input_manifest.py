@@ -344,14 +344,14 @@ def observe_manifest_inputs(
                 adapter_reasons.append(f"input_observer_failed:{entry.input_id}:file")
                 continue
         else:
-            observer = normalized_observers.get(scheme)
-            if observer is None:
+            selected_observer = normalized_observers.get(scheme)
+            if selected_observer is None:
                 adapter_reasons.append(
                     f"input_observer_missing:{entry.input_id}:{scheme}"
                 )
                 continue
             try:
-                observation = observer(entry)
+                observation = selected_observer(entry)
             except Exception as error:
                 adapter_reasons.append(
                     f"input_observer_failed:{entry.input_id}:{type(error).__name__}"
@@ -554,10 +554,15 @@ def create_input_manifest(
         if entry.contains_credentials or entry.contains_direct_identifiers:
             raise ValueError(f"input safety flags violated: {entry.input_id}")
     ordered = tuple(sorted(entries, key=lambda value: value.input_id))
-    payload = {
-        "schema_version": _nonempty(schema_version, "schema_version"),
-        "manifest_id": _nonempty(manifest_id, "manifest_id"),
-        "population_identity": _nonempty(population_identity, "population_identity"),
+    normalized_schema_version = _nonempty(schema_version, "schema_version")
+    normalized_manifest_id = _nonempty(manifest_id, "manifest_id")
+    normalized_population_identity = _nonempty(
+        population_identity, "population_identity"
+    )
+    payload: dict[str, Any] = {
+        "schema_version": normalized_schema_version,
+        "manifest_id": normalized_manifest_id,
+        "population_identity": normalized_population_identity,
         "created_at": created_at,
         "feature_cutoff": feature_cutoff,
         "label_cutoff": label_cutoff,
@@ -566,9 +571,9 @@ def create_input_manifest(
     }
     digest = _manifest_digest(payload)
     return ImmutableInputManifest(
-        schema_version=payload["schema_version"],
-        manifest_id=payload["manifest_id"],
-        population_identity=payload["population_identity"],
+        schema_version=normalized_schema_version,
+        manifest_id=normalized_manifest_id,
+        population_identity=normalized_population_identity,
         created_at=created_at,
         feature_cutoff=feature_cutoff,
         label_cutoff=label_cutoff,

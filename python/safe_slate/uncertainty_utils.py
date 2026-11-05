@@ -7,11 +7,11 @@ import json
 from math import isfinite
 from numbers import Real
 import struct
-from typing import Sequence
+from typing import Literal, Sequence
 
 
-MATRIX_DIGEST_JSON_V1 = "json-v1"
-MATRIX_DIGEST_F64LE_V1 = "f64le-v1"
+MATRIX_DIGEST_JSON_V1: Literal["json-v1"] = "json-v1"
+MATRIX_DIGEST_F64LE_V1: Literal["f64le-v1"] = "f64le-v1"
 
 
 def canonical_matrix_bytes(matrix: Sequence[Sequence[float]]) -> bytes:

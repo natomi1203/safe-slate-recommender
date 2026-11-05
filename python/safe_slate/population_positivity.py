@@ -98,13 +98,16 @@ def _validated_payload(
         not isinstance(minimum_logging_probability_lower_bound, Real)
         or isinstance(minimum_logging_probability_lower_bound, bool)
         or not isfinite(minimum_logging_probability_lower_bound)
-        or not 0.0 < minimum_logging_probability_lower_bound <= 1.0
     ):
         raise ValueError(
             "minimum_logging_probability_lower_bound must be in (0,1] or null"
         )
     else:
         lower_bound = float(minimum_logging_probability_lower_bound)
+        if not 0.0 < lower_bound <= 1.0:
+            raise ValueError(
+                "minimum_logging_probability_lower_bound must be in (0,1] or null"
+            )
     if decision == "established" and lower_bound is None:
         raise ValueError("established positivity requires a positive lower bound")
     if decision == "not_established" and lower_bound is not None:
@@ -198,10 +201,11 @@ def _validated_statistical_payload(
         not isinstance(simultaneous_failure_probability, Real)
         or isinstance(simultaneous_failure_probability, bool)
         or not isfinite(simultaneous_failure_probability)
-        or not 0.0 <= simultaneous_failure_probability < 1.0
     ):
         raise ValueError("simultaneous_failure_probability must lie in [0,1)")
     failure = float(simultaneous_failure_probability)
+    if not 0.0 <= failure < 1.0:
+        raise ValueError("simultaneous_failure_probability must lie in [0,1)")
     if guarantee_kind == "deterministic" and failure != 0.0:
         raise ValueError("deterministic evidence must have zero failure probability")
     if guarantee_kind == "finite_sample" and failure <= 0.0:
@@ -397,7 +401,7 @@ def load_population_positivity_evidence(
         expected = set(StatisticalPopulationPositivityEvidence.__dataclass_fields__)
         if set(payload) != expected:
             raise ValueError("statistical population positivity evidence fields differ")
-        recreated = create_statistical_population_positivity_evidence(
+        statistical_recreated = create_statistical_population_positivity_evidence(
             schema_version=payload["schema_version"],
             evidence_id=payload["evidence_id"],
             decision=payload["decision"],
@@ -421,13 +425,13 @@ def load_population_positivity_evidence(
             audit_design_identity=payload["audit_design_identity"],
             source_certificate_sha256=payload["source_certificate_sha256"],
         )
-        if recreated.evidence_digest != payload["evidence_digest"]:
+        if statistical_recreated.evidence_digest != payload["evidence_digest"]:
             raise ValueError("population positivity evidence digest mismatch")
-        return recreated
+        return statistical_recreated
     expected = set(PopulationPositivityEvidence.__dataclass_fields__)
     if set(payload) != expected:
         raise ValueError("population positivity evidence fields differ")
-    recreated = create_population_positivity_evidence(
+    legacy_recreated = create_population_positivity_evidence(
         schema_version=payload["schema_version"],
         evidence_id=payload["evidence_id"],
         decision=payload["decision"],
@@ -442,9 +446,9 @@ def load_population_positivity_evidence(
             payload["minimum_logging_probability_lower_bound"]
         ),
     )
-    if recreated.evidence_digest != payload["evidence_digest"]:
+    if legacy_recreated.evidence_digest != payload["evidence_digest"]:
         raise ValueError("population positivity evidence digest mismatch")
-    return recreated
+    return legacy_recreated
 
 
 def canonical_population_positivity_evidence_bytes(

@@ -1,5 +1,7 @@
 from collections.abc import Callable, Mapping, Sequence
+from typing import final
 
+@final
 class ProjectedContrastUncertainty:
     @property
     def covariance(self) -> list[list[float]]: ...
@@ -10,6 +12,7 @@ class ProjectedContrastUncertainty:
     @property
     def feature_dimension(self) -> int: ...
 
+@final
 class PreparedLinearContrastMarginals:
     @property
     def safety_variances(self) -> list[float]: ...
@@ -40,6 +43,7 @@ def prepare_linear_contrast_marginals_f64le(
     parameter_covariance: Sequence[Sequence[float]],
 ) -> PreparedLinearContrastMarginals: ...
 
+@final
 class CertifiedOracleResult:
     @property
     def selected_indices(self) -> list[int]: ...
@@ -86,6 +90,7 @@ class CertifiedOracleResult:
     @property
     def elapsed_seconds(self) -> float: ...
 
+@final
 class CertifiedReplacementResult:
     @property
     def selected_operation_indices(self) -> list[int]: ...
@@ -186,3 +191,15 @@ def optimize_replacements(
     custom_predicate: Callable[[dict[str, object]], bool] | None = None,
     custom_predicate_batch: Callable[[list[dict[str, object]]], Sequence[bool]] | None = None,
 ) -> CertifiedReplacementResult: ...
+
+__all__ = [
+    "CertifiedOracleResult",
+    "CertifiedReplacementResult",
+    "PreparedLinearContrastMarginals",
+    "ProjectedContrastUncertainty",
+    "optimize_replacements",
+    "optimize_slate",
+    "prepare_linear_contrast_marginals_f64le",
+    "project_linear_contrast_marginals",
+    "project_linear_contrast_uncertainty",
+]

@@ -34,14 +34,12 @@ def _nonempty(value: object, field: str) -> str:
 
 
 def _finite_rate(value: object, field: str) -> float:
-    if (
-        not isinstance(value, Real)
-        or isinstance(value, bool)
-        or not isfinite(value)
-        or not 0.0 <= value <= 1.0
-    ):
+    if not isinstance(value, Real) or isinstance(value, bool) or not isfinite(value):
         raise ValueError(f"{field} must be finite and in [0, 1]")
-    return float(value)
+    normalized = float(value)
+    if not 0.0 <= normalized <= 1.0:
+        raise ValueError(f"{field} must be finite and in [0, 1]")
+    return normalized
 
 
 def _finite_positive(value: object, field: str) -> float:
@@ -87,7 +85,7 @@ class OpeEvaluationContract:
     primary_metric: str
     primary_contrast: str
     analysis_unit: str
-    propensity_mode: str
+    propensity_mode: Literal["known", "interval", "missing"]
     input_manifest_digest: str
     code_revision: str
     dependency_lock_digest: str
