@@ -1,0 +1,434 @@
+from __future__ import annotations
+
+from dataclasses import replace
+import json
+from pathlib import Path
+
+import pytest
+
+from safe_slate import (
+    attach_service_latency,
+    canonical_proposal_log_bytes,
+    create_service_latency_trace,
+    create_service_trace_completion,
+    guarded_rerank,
+    join_service_trace_completions,
+    load_service_trace_completion,
+    load_service_trace_completions_jsonl,
+    proposal_log_sha256,
+    REGISTERED_SERVICE_STAGES,
+    ServiceTraceRecorder,
+    summarize_production_service_run,
+)
+
+
+SERVICE_TRACE_SCHEMA = (
+    Path(__file__).parents[1]
+    / "schemas"
+    / "service_trace_completion.schema.json"
+)
+
+
+def _proposal(request_id: str):
+    return guarded_rerank(
+        request_id=request_id,
+        event_timestamp="2026-11-03T12:00:00+09:00",
+        baseline_item_ids=[10, 11, 12, 13],
+        protected_count=2,
+        remove_positions=[2, 3],
+        add_item_ids=[100, 101],
+        reward_deltas=[0.2, 0.1],
+        safety_mean_deltas=[0.04, 0.03],
+        safety_variances=[0.0, 0.0],
+        baseline_metric=0.5,
+        degradation_tolerance=0.02,
+        max_replacements=2,
+        timeout_ms=10,
+        serving_mode="serve",
+        support_ok=True,
+        uncertainty_valid=True,
+        distribution_shift_detected=False,
+        proposal_log_complete=True,
+    ).proposal_log
+
+
+def _trace():
+    return create_service_latency_trace(
+        response_latency_ms=20.0,
+        log_commit_latency_ms=25.0,
+        candidate_generation_ms=3.0,
+        model_inference_ms=5.0,
+        queueing_ms=1.0,
+        rpc_ms=2.0,
+        guardrail_facade_ms=10.0,
+        serialization_ms=1.0,
+        proposal_log_write_ms=2.0,
+    )
+
+
+class _FakeClock:
+    def __init__(self) -> None:
+        self.value = 0.0
+
+    def __call__(self) -> float:
+        return self.value
+
+    def advance_ms(self, value: float) -> None:
+        self.value += value / 1_000.0
+
+
+def _completion(
+    request_id: str,
+    trace_id: str = "1" * 32,
+    *,
+    proposal=None,
+    trace=None,
+):
+    return create_service_trace_completion(
+        proposal or _proposal(request_id),
+        trace_id=trace_id,
+        completed_at="2026-11-03T12:00:01+09:00",
+        trace_source="opentelemetry",
+        service_latency_trace=trace or _trace(),
+    )
+
+
+def test_post_commit_sidecar_round_trips_and_binds_primary_bytes() -> None:
+    proposal = _proposal("r0")
+    completion = create_service_trace_completion(
+        proposal,
+        trace_id="0123456789abcdef0123456789abcdef",
+        completed_at="2026-11-03T12:00:01+09:00",
+        trace_source="opentelemetry",
+        service_latency_trace=_trace(),
+    )
+
+    assert completion.proposal_log_sha256 == proposal_log_sha256(proposal)
+    assert len(canonical_proposal_log_bytes(proposal)) > 0
+    assert load_service_trace_completion(completion.to_dict()) == completion
+    assert completion.service_latency_trace.complete
+
+
+def test_published_service_trace_schema_matches_canonical_python_fields() -> None:
+    schema = json.loads(SERVICE_TRACE_SCHEMA.read_text(encoding="utf-8"))
+    completion = _completion("r0").to_dict()
+    trace = completion["service_latency_trace"]
+
+    assert set(schema["required"]) == set(completion)
+    assert set(schema["properties"]) == set(completion)
+    assert schema["properties"]["schema_version"]["const"] == completion[
+        "schema_version"
+    ]
+    trace_schema = schema["$defs"]["service_latency_trace"]
+    assert set(trace_schema["required"]) == set(trace)
+    assert set(trace_schema["properties"]) == set(trace)
+    assert trace_schema["properties"]["schema_version"]["const"] == trace[
+        "schema_version"
+    ]
+    assert trace_schema["properties"]["measurement_scope"]["const"] == trace[
+        "measurement_scope"
+    ]
+    assert trace_schema["properties"]["clock"]["const"] == trace["clock"]
+    assert trace_schema["properties"]["complete"]["const"] is True
+
+
+def test_exact_join_attaches_trace_without_mutating_primary_record() -> None:
+    first = _proposal("r0")
+    second = _proposal("r1")
+    completions = [
+        _completion("r1", "2" * 32, proposal=second),
+        _completion("r0", "1" * 32, proposal=first),
+    ]
+
+    joined = join_service_trace_completions([first, second], completions)
+
+    assert first.service_latency_trace is None
+    assert second.service_latency_trace is None
+    assert all(log.service_latency_trace == _trace() for log in joined)
+    assert [log.request_id for log in joined] == ["r0", "r1"]
+
+
+def test_digest_tampering_and_incomplete_join_fail_closed() -> None:
+    proposal = _proposal("r0")
+    completion = _completion("r0")
+    tampered = replace(proposal, context={"tampered": True})
+
+    with pytest.raises(ValueError, match="digest mismatch"):
+        join_service_trace_completions([tampered], [completion])
+    with pytest.raises(ValueError, match="incomplete"):
+        join_service_trace_completions([proposal, _proposal("r1")], [completion])
+    with pytest.raises(ValueError, match="incomplete"):
+        join_service_trace_completions(
+            [proposal], [completion, _completion("r1", "2" * 32)]
+        )
+
+
+def test_duplicate_request_or_trace_identity_is_rejected() -> None:
+    with pytest.raises(ValueError, match="duplicate request"):
+        join_service_trace_completions(
+            [_proposal("r0"), _proposal("r0")],
+            [_completion("r0")],
+        )
+    with pytest.raises(ValueError, match="duplicate trace"):
+        join_service_trace_completions(
+            [_proposal("r0"), _proposal("r1")],
+            [_completion("r0", "1" * 32), _completion("r1", "1" * 32)],
+        )
+
+
+def test_completion_requires_full_trace_and_valid_chronology() -> None:
+    incomplete = create_service_latency_trace(
+        response_latency_ms=20.0,
+        log_commit_latency_ms=25.0,
+    )
+    with pytest.raises(ValueError, match="every registered stage"):
+        create_service_trace_completion(
+            _proposal("r0"),
+            trace_id="1" * 32,
+            completed_at="2026-11-03T12:00:01+09:00",
+            trace_source="opentelemetry",
+            service_latency_trace=incomplete,
+        )
+    with pytest.raises(ValueError, match="precede"):
+        create_service_trace_completion(
+            _proposal("r0"),
+            trace_id="1" * 32,
+            completed_at="2026-11-03T11:59:59+09:00",
+            trace_source="opentelemetry",
+            service_latency_trace=_trace(),
+        )
+    with pytest.raises(ValueError, match="trace_id"):
+        create_service_trace_completion(
+            _proposal("r0"),
+            trace_id="0" * 32,
+            completed_at="2026-11-03T12:00:01+09:00",
+            trace_source="opentelemetry",
+            service_latency_trace=_trace(),
+        )
+
+
+def test_primary_record_with_embedded_trace_cannot_be_rebound() -> None:
+    attached = attach_service_latency(_proposal("r0"), _trace())
+    with pytest.raises(ValueError, match="must not already"):
+        canonical_proposal_log_bytes(attached)
+
+
+def test_bounded_sidecar_jsonl_loader_preserves_order(tmp_path: Path) -> None:
+    completions = [_completion("r0", "1" * 32), _completion("r1", "2" * 32)]
+    source = tmp_path / "service-traces.jsonl"
+    source.write_text(
+        "".join(json.dumps(value.to_dict()) + "\n" for value in completions),
+        encoding="utf-8",
+    )
+
+    loaded = load_service_trace_completions_jsonl(
+        source,
+        maximum_records=2,
+        maximum_bytes=source.stat().st_size,
+    )
+    assert loaded == tuple(completions)
+    with pytest.raises(ValueError, match="maximum_records"):
+        load_service_trace_completions_jsonl(
+            source,
+            maximum_records=1,
+            maximum_bytes=source.stat().st_size,
+        )
+    with pytest.raises(ValueError, match="maximum_bytes"):
+        load_service_trace_completions_jsonl(
+            source,
+            maximum_records=2,
+            maximum_bytes=source.stat().st_size - 1,
+        )
+
+
+def test_sidecar_loader_rejects_duplicate_json_keys(tmp_path: Path) -> None:
+    source = tmp_path / "duplicate.jsonl"
+    source.write_text(
+        '{"schema_version":"x","schema_version":"y"}\n',
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="duplicate JSON key"):
+        load_service_trace_completions_jsonl(
+            source,
+            maximum_records=1,
+            maximum_bytes=source.stat().st_size,
+        )
+
+
+def _summary(logs, completions, **overrides):
+    values = {
+        "window_start": "2026-11-03T00:00:00+09:00",
+        "window_end": "2026-11-04T00:00:00+09:00",
+        "minimum_requests": 2,
+        "maximum_response_p95_ms": 30.0,
+        "maximum_log_commit_p95_ms": 30.0,
+        "maximum_fallback_rate": 0.0,
+    }
+    values.update(overrides)
+    return summarize_production_service_run(logs, completions, **values)
+
+
+def test_production_service_summary_reports_every_stage_without_broad_claims() -> None:
+    first = _proposal("r0")
+    second = _proposal("r1")
+    summary = _summary(
+        [first, second],
+        [
+            _completion("r0", "1" * 32, proposal=first),
+            _completion("r1", "2" * 32, proposal=second),
+        ],
+    )
+
+    assert summary.observed_window_latency_evidence_valid
+    assert summary.request_count == 2
+    assert summary.invalid_record_rate == 0.0
+    assert summary.fallback_rate == 0.0
+    assert summary.latency_ms["response"]["p95"] == pytest.approx(20.0)
+    assert summary.latency_ms["log_commit"]["p95"] == pytest.approx(25.0)
+    assert summary.latency_ms["candidate_generation"]["p95"] == pytest.approx(3.0)
+    assert summary.latency_ms["model_inference"]["p95"] == pytest.approx(5.0)
+    assert not summary.production_latency_claim_authorized
+    assert not summary.production_safety_claim_authorized
+    assert not summary.causal_lift_claim_authorized
+    assert summary.to_dict()["trace_source_counts"] == {"opentelemetry": 2}
+
+
+def test_production_service_summary_fails_slow_or_invalid_window() -> None:
+    first = _proposal("r0")
+    second = _proposal("r1")
+    slow_trace = create_service_latency_trace(
+        response_latency_ms=40.0,
+        log_commit_latency_ms=45.0,
+        candidate_generation_ms=3.0,
+        model_inference_ms=5.0,
+        queueing_ms=1.0,
+        rpc_ms=2.0,
+        guardrail_facade_ms=10.0,
+        serialization_ms=1.0,
+        proposal_log_write_ms=2.0,
+    )
+    summary = _summary(
+        [first, second],
+        [
+            _completion("r0", "1" * 32, proposal=first, trace=slow_trace),
+            _completion("r1", "2" * 32, proposal=second),
+        ],
+    )
+
+    assert not summary.observed_window_latency_evidence_valid
+    assert "response_p95_above_gate" in summary.reasons
+    assert "log_commit_p95_above_gate" in summary.reasons
+
+    outside = replace(
+        first,
+        event_timestamp="2026-11-04T00:00:00+09:00",
+    )
+    outside_summary = _summary(
+        [outside, second],
+        [
+            create_service_trace_completion(
+                outside,
+                trace_id="1" * 32,
+                completed_at="2026-11-04T00:00:01+09:00",
+                trace_source="opentelemetry",
+                service_latency_trace=_trace(),
+            ),
+            _completion("r1", "2" * 32, proposal=second),
+        ],
+    )
+    assert not outside_summary.observed_window_latency_evidence_valid
+    assert outside_summary.invalid_record_rate == pytest.approx(0.5)
+    assert "invalid_record_rate_above_gate" in outside_summary.reasons
+
+
+def test_production_summary_preserves_insufficient_sample_state() -> None:
+    proposal = _proposal("r0")
+    summary = _summary(
+        [proposal],
+        [_completion("r0", proposal=proposal)],
+        minimum_requests=2,
+    )
+    assert not summary.observed_window_latency_evidence_valid
+    assert summary.reasons == ("request_count_below_gate",)
+
+
+def test_request_recorder_measures_real_stages_and_completes_sidecar() -> None:
+    clock = _FakeClock()
+    recorder = ServiceTraceRecorder(
+        trace_id="1" * 32,
+        event_timestamp="2026-11-03T12:00:00+09:00",
+        trace_source="opentelemetry",
+        clock=clock,
+    )
+    recorder.record_stage_ms("queueing", 1.0)
+    recorder.record_stage_ms("rpc", 2.0)
+    for stage, duration in (
+        ("candidate_generation", 3.0),
+        ("model_inference", 5.0),
+        ("guardrail_facade", 10.0),
+        ("serialization", 1.0),
+    ):
+        with recorder.measure(stage):
+            clock.advance_ms(duration)
+    response = recorder.mark_response()
+    with recorder.measure("proposal_log_write"):
+        clock.advance_ms(2.0)
+    commit = recorder.mark_primary_log_commit()
+    completion = recorder.complete(
+        _proposal("r0"),
+        completed_at="2026-11-03T12:00:01+09:00",
+    )
+
+    assert response == pytest.approx(19.0)
+    assert commit == pytest.approx(21.0)
+    trace = completion.service_latency_trace
+    assert trace.candidate_generation_ms == pytest.approx(3.0)
+    assert trace.model_inference_ms == pytest.approx(5.0)
+    assert trace.queueing_ms == pytest.approx(1.0)
+    assert trace.rpc_ms == pytest.approx(2.0)
+    assert trace.guardrail_facade_ms == pytest.approx(10.0)
+    assert trace.serialization_ms == pytest.approx(1.0)
+    assert trace.proposal_log_write_ms == pytest.approx(2.0)
+    assert set(REGISTERED_SERVICE_STAGES) == {
+        "candidate_generation",
+        "model_inference",
+        "queueing",
+        "rpc",
+        "guardrail_facade",
+        "serialization",
+        "proposal_log_write",
+    }
+
+
+def test_request_recorder_rejects_missing_duplicate_or_out_of_order_events() -> None:
+    clock = _FakeClock()
+    recorder = ServiceTraceRecorder(
+        trace_id="1" * 32,
+        event_timestamp="2026-11-03T12:00:00+09:00",
+        clock=clock,
+    )
+    recorder.record_stage_ms("queueing", 1.0)
+    with pytest.raises(ValueError, match="already recorded"):
+        recorder.record_stage_ms("queueing", 2.0)
+    with pytest.raises(ValueError, match="response must be marked"):
+        recorder.mark_primary_log_commit()
+    recorder.mark_response()
+    with pytest.raises(ValueError, match="proposal_log_write"):
+        recorder.mark_primary_log_commit()
+    with pytest.raises(ValueError, match="stages are missing"):
+        recorder.complete(
+            _proposal("r0"),
+            completed_at="2026-11-03T12:00:01+09:00",
+        )
+
+
+def test_request_recorder_detects_backward_clock() -> None:
+    clock = _FakeClock()
+    recorder = ServiceTraceRecorder(
+        trace_id="1" * 32,
+        event_timestamp="2026-11-03T12:00:00+09:00",
+        clock=clock,
+    )
+    clock.value = -1.0
+    with pytest.raises(ValueError, match="backwards"):
+        recorder.mark_response()

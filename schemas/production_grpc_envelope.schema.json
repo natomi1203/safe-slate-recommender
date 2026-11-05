@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/safe-adaptive-replacement/production-grpc-envelope.schema.json",
+  "title": "Observed production gRPC server envelope",
+  "description": "Process-local timing from gRPC Begin to OutPayload sent. This schema does not claim upstream queueing, vendor-internal stage timing, pure serialization, or durable log commit.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "request_id",
+    "trace_id",
+    "full_method_name",
+    "measurement_scope",
+    "rpc_begin_at",
+    "handler_started_at",
+    "response_ready_at",
+    "payload_sent_at",
+    "rpc_begin_to_handler_started_nanoseconds",
+    "handler_started_to_response_ready_nanoseconds",
+    "response_ready_to_payload_sent_nanoseconds",
+    "rpc_begin_to_payload_sent_nanoseconds",
+    "payload_length_bytes",
+    "compressed_payload_length_bytes",
+    "wire_payload_length_bytes"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "safe-slate-production-post-response-1.1"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "trace_id": {
+      "type": "string",
+      "pattern": "^(?!0{32}$)[0-9a-f]{32}$"
+    },
+    "full_method_name": {
+      "const": "/x_asia.api.gb.product_recommendation.v1.ProductRecommendationService/ListPredictedProducts"
+    },
+    "measurement_scope": {
+      "const": "grpc_begin_to_payload_sent"
+    },
+    "rpc_begin_at": {"type": "string", "format": "date-time"},
+    "handler_started_at": {"type": "string", "format": "date-time"},
+    "response_ready_at": {"type": "string", "format": "date-time"},
+    "payload_sent_at": {"type": "string", "format": "date-time"},
+    "rpc_begin_to_handler_started_nanoseconds": {
+      "$ref": "#/$defs/nonnegative_integer"
+    },
+    "handler_started_to_response_ready_nanoseconds": {
+      "$ref": "#/$defs/nonnegative_integer"
+    },
+    "response_ready_to_payload_sent_nanoseconds": {
+      "$ref": "#/$defs/nonnegative_integer"
+    },
+    "rpc_begin_to_payload_sent_nanoseconds": {
+      "$ref": "#/$defs/nonnegative_integer"
+    },
+    "payload_length_bytes": {"$ref": "#/$defs/nonnegative_integer"},
+    "compressed_payload_length_bytes": {
+      "$ref": "#/$defs/nonnegative_integer"
+    },
+    "wire_payload_length_bytes": {"$ref": "#/$defs/nonnegative_integer"}
+  },
+  "$defs": {
+    "nonnegative_integer": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

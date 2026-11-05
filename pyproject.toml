@@ -1,0 +1,38 @@
+[build-system]
+requires = ["maturin>=1.16,<2"]
+build-backend = "maturin"
+
+[project]
+name = "safe-slate-recommender"
+version = "0.3.0"
+description = "Certified anytime slate construction backed by Rust"
+readme = "README.md"
+requires-python = ">=3.12"
+license = "CC-BY-4.0"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Rust",
+  "Typing :: Typed",
+]
+dependencies = []
+
+[project.scripts]
+safe-slate-freeze-inputs = "safe_slate.external_intake:main"
+
+[project.urls]
+Repository = "https://github.com/natomi1203/purchase-aware-retrieval-research"
+
+[dependency-groups]
+dev = [
+  "maturin>=1.16,<2",
+  "pytest>=8.4,<10",
+]
+
+[tool.maturin]
+python-source = "python"
+module-name = "safe_slate._core"
+features = ["pyo3/extension-module"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

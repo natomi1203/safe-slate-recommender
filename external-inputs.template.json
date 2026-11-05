@@ -1,0 +1,104 @@
+{
+  "schema_version": "safe-slate-external-intake-1.0",
+  "manifest_id": "replace-with-private-manifest-id",
+  "population_identity": "replace-with-frozen-population-identity",
+  "created_at": "2026-11-03T00:00:00+09:00",
+  "feature_cutoff": "2026-10-01T00:00:00+09:00",
+  "label_cutoff": "2026-10-08T00:00:00+09:00",
+  "privacy_reviewed": false,
+  "synthetic_inputs": false,
+  "maximum_input_bytes": 1000000000,
+  "maximum_log_records": 10000000,
+  "inputs": [
+    {
+      "input_id": "candidate-action-log",
+      "semantic_role": "candidate_action_log",
+      "path": "/private/replace-me/candidate-action-log.jsonl",
+      "version": "replace-with-immutable-version",
+      "snapshot_time": "2026-10-01T00:00:00+09:00",
+      "temporal_scope": "feature",
+      "schema_version": "safe-slate-proposal-log-jsonl-1.3"
+    },
+    {
+      "input_id": "propensity-or-interval",
+      "semantic_role": "propensity_or_interval",
+      "path": "/private/replace-me/propensity-or-interval.jsonl",
+      "version": "replace-with-immutable-version",
+      "snapshot_time": "2026-10-01T00:00:00+09:00",
+      "temporal_scope": "feature",
+      "schema_version": "safe-slate-propensity-jsonl-1.0"
+    },
+    {
+      "input_id": "settled-purchase-labels",
+      "semantic_role": "settled_purchase_labels",
+      "path": "/private/replace-me/settled-purchase-labels.jsonl",
+      "version": "replace-with-immutable-version",
+      "snapshot_time": "2026-10-08T00:00:00+09:00",
+      "temporal_scope": "label",
+      "schema_version": "safe-slate-settled-purchase-label-jsonl-1.0"
+    },
+    {
+      "input_id": "pseudonymous-user-blocks",
+      "semantic_role": "pseudonymous_user_blocks",
+      "path": "/private/replace-me/pseudonymous-user-blocks.jsonl",
+      "version": "replace-with-immutable-version",
+      "snapshot_time": "2026-10-01T00:00:00+09:00",
+      "temporal_scope": "feature",
+      "schema_version": "safe-slate-user-block-jsonl-1.0"
+    },
+    {
+      "input_id": "population-positivity-evidence",
+      "semantic_role": "population_positivity_evidence",
+      "path": "/private/replace-me/population-positivity-evidence.json",
+      "version": "replace-with-evidence-id",
+      "snapshot_time": "2026-10-08T00:00:00+09:00",
+      "temporal_scope": "atemporal",
+      "schema_version": "safe-slate-population-positivity-evidence-1.0"
+    },
+    {
+      "input_id": "production-constraint-trace",
+      "semantic_role": "production_constraint_trace",
+      "path": "/private/replace-me/production-constraint-trace.jsonl",
+      "version": "replace-with-immutable-version",
+      "snapshot_time": "2026-10-01T00:00:00+09:00",
+      "temporal_scope": "feature",
+      "schema_version": "safe-slate-constraint-trace-jsonl-1.0"
+    },
+    {
+      "input_id": "shadow-record",
+      "semantic_role": "shadow_record",
+      "path": "/private/replace-me/shadow-record.jsonl",
+      "version": "replace-with-immutable-version",
+      "snapshot_time": "2026-10-01T00:00:00+09:00",
+      "temporal_scope": "feature",
+      "schema_version": "safe-slate-shadow-record-jsonl-1.0"
+    },
+    {
+      "input_id": "service-trace-completion",
+      "semantic_role": "service_trace_completion",
+      "path": "/private/replace-me/service-trace-completion.jsonl",
+      "version": "replace-with-immutable-version",
+      "snapshot_time": "2026-10-01T00:00:00+09:00",
+      "temporal_scope": "feature",
+      "schema_version": "safe-slate-service-trace-completion-jsonl-1.0"
+    },
+    {
+      "input_id": "linear-parameter-covariance",
+      "semantic_role": "linear_parameter_covariance",
+      "path": "/private/replace-me/linear-parameter-covariance.f64le",
+      "version": "replace-with-model-version",
+      "snapshot_time": "2026-10-01T00:00:00+09:00",
+      "temporal_scope": "feature",
+      "schema_version": "safe-slate-matrix-f64le-v1"
+    },
+    {
+      "input_id": "request-contrast-features",
+      "semantic_role": "request_contrast_features",
+      "path": "/private/replace-me/request-contrast-features.f64le",
+      "version": "replace-with-feature-version",
+      "snapshot_time": "2026-10-01T00:00:00+09:00",
+      "temporal_scope": "feature",
+      "schema_version": "safe-slate-matrix-f64le-v1"
+    }
+  ]
+}

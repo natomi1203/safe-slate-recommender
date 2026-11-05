@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/safe-adaptive-replacement/service-trace-completion.schema.json",
+  "title": "Post-commit production service trace bound to a proposal record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "trace_id",
+    "request_id",
+    "event_timestamp",
+    "completed_at",
+    "trace_source",
+    "proposal_log_sha256",
+    "service_latency_trace"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "safe-slate-service-trace-completion-1.0"
+    },
+    "trace_id": {
+      "type": "string",
+      "pattern": "^(?!0{32}$)[0-9a-f]{32}$"
+    },
+    "request_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "event_timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "trace_source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "proposal_log_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "service_latency_trace": {
+      "$ref": "#/$defs/service_latency_trace"
+    }
+  },
+  "$defs": {
+    "nonnegative_finite_milliseconds": {
+      "type": "number",
+      "minimum": 0
+    },
+    "service_latency_trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "measurement_scope",
+        "clock",
+        "response_latency_ms",
+        "log_commit_latency_ms",
+        "candidate_generation_ms",
+        "model_inference_ms",
+        "queueing_ms",
+        "rpc_ms",
+        "guardrail_facade_ms",
+        "serialization_ms",
+        "proposal_log_write_ms",
+        "complete"
+      ],
+      "properties": {
+        "schema_version": {"const": "1.0"},
+        "measurement_scope": {
+          "const": "service_ingress_to_response_and_log_commit"
+        },
+        "clock": {"const": "monotonic"},
+        "response_latency_ms": {
+          "$ref": "#/$defs/nonnegative_finite_milliseconds"
+        },
+        "log_commit_latency_ms": {
+          "$ref": "#/$defs/nonnegative_finite_milliseconds"
+        },
+        "candidate_generation_ms": {
+          "$ref": "#/$defs/nonnegative_finite_milliseconds"
+        },
+        "model_inference_ms": {
+          "$ref": "#/$defs/nonnegative_finite_milliseconds"
+        },
+        "queueing_ms": {
+          "$ref": "#/$defs/nonnegative_finite_milliseconds"
+        },
+        "rpc_ms": {
+          "$ref": "#/$defs/nonnegative_finite_milliseconds"
+        },
+        "guardrail_facade_ms": {
+          "$ref": "#/$defs/nonnegative_finite_milliseconds"
+        },
+        "serialization_ms": {
+          "$ref": "#/$defs/nonnegative_finite_milliseconds"
+        },
+        "proposal_log_write_ms": {
+          "$ref": "#/$defs/nonnegative_finite_milliseconds"
+        },
+        "complete": {"const": true}
+      }
+    }
+  }
+}
