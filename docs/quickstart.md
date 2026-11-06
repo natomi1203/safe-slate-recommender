@@ -7,7 +7,7 @@ distribution is named `tommyslate`; its stable import remains `safe_slate`.
 Add the published distribution to a uv-managed project:
 
 ```bash
-uv add "tommyslate==0.4.0"
+uv add "tommyslate==0.4.1"
 ```
 
 When migrating from `safe-slate-recommender==0.3.1`, replace the distribution;
@@ -15,7 +15,7 @@ do not install both because they provide the same `safe_slate` module:
 
 ```bash
 uv remove safe-slate-recommender
-uv add "tommyslate==0.4.0"
+uv add "tommyslate==0.4.1"
 ```
 
 The package has no runtime Python dependencies. For a source build, use a

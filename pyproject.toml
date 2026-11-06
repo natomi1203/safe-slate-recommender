@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "tommyslate"
-version = "0.4.0"
+version = "0.4.1"
 description = "TommySlate: every recommendation checked by a certified Rust-backed slate optimizer"
 readme = "README.md"
 requires-python = ">=3.15"
@@ -12,7 +12,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 keywords = ["recommender-systems", "safe-optimization", "slate-ranking", "rust"]
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 4 - Beta",
   "Intended Audience :: Developers",
   "Intended Audience :: Science/Research",
   "Programming Language :: Python :: 3",
@@ -31,10 +31,10 @@ tommyslate-freeze-inputs = "safe_slate.external_intake:main"
 safe-slate-freeze-inputs = "safe_slate.external_intake:main"
 
 [project.urls]
-Repository = "https://github.com/natomi1203/safe-slate-recommender"
-Documentation = "https://github.com/natomi1203/safe-slate-recommender/tree/main/docs"
-Changelog = "https://github.com/natomi1203/safe-slate-recommender/blob/main/CHANGELOG.md"
-Issues = "https://github.com/natomi1203/safe-slate-recommender/issues"
+Repository = "https://github.com/natomi1203/tommyslate"
+Documentation = "https://github.com/natomi1203/tommyslate/tree/main/docs"
+Changelog = "https://github.com/natomi1203/tommyslate/blob/main/CHANGELOG.md"
+Issues = "https://github.com/natomi1203/tommyslate/issues"
 
 [dependency-groups]
 dev = [

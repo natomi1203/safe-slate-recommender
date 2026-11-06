@@ -31,7 +31,7 @@ env:
   RUST_VERSION: "1.99.0"
   MATURIN_VERSION: "v1.16.0"
   PACKAGE_NAME: "tommyslate"
-  PACKAGE_VERSION: "0.4.0"
+  PACKAGE_VERSION: "0.4.1"
 
 jobs:
   validate-source:

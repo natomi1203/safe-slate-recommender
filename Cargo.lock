@@ -1053,7 +1053,7 @@ dependencies = [
 
 [[package]]
 name = "tommyslate"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "prost",
  "protoc-bin-vendored",
