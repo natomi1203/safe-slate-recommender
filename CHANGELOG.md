@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.1
+
+- Added a loopback-only tonic gRPC sidecar with immutable model and contract
+  identities, strict candidate and guardrail bounds, baseline fallback, and a
+  non-root container build.
+- Added Python and Rust coverage gates, including 100% Rust line, function,
+  and region coverage without exposing coverage-only hooks in normal wheels.
+- Added citation and machine-readable research lineage that distinguish
+  repository-authored software contracts from third-party background and
+  research-only implementations.
+- Reworked the README around user problems, installation, a verified
+  protected-slate example, and explicit safety and production-claim limits.
+- Added an OIDC-only production PyPI release path that reuses one verified
+  artifact set after TestPyPI hash and five-platform installation checks.
+
 ## 0.3.0
 
 - Qualified five platform wheels and one sdist on TestPyPI through a protected

@@ -2,6 +2,22 @@
 
 Assessment date: 2026-11-06 (Asia/Tokyo).
 
+## Version 0.3.1 production candidate
+
+Version 0.3.1 is the production candidate because `main` contains software
+changes made after the TestPyPI-only 0.3.0 qualification. Reusing 0.3.0 would
+produce different immutable artifacts under an existing version, so the
+release workflow must build 0.3.1 from one exact `main` commit.
+
+The workflow first publishes and verifies the six 0.3.1 artifacts on TestPyPI,
+including installation on all five supported runners. Only then can the
+protected `pypi` environment release the same downloaded artifact set to
+production through OIDC. It rebuilds nothing between indexes and rejects any
+remote filename whose SHA-256 differs from the release manifest.
+
+Production PyPI publication is approved. Tags, GitHub Releases, containers,
+deployments, and announcements are not part of this approval.
+
 ## Verified locally and on TestPyPI
 
 - `safe-slate-recommender` was not present in the public PyPI JSON API at the
@@ -40,14 +56,16 @@ Assessment date: 2026-11-06 (Asia/Tokyo).
 | `safe_slate_recommender-0.3.0-cp310-abi3-win_amd64.whl` | `cd4fa725f3b7a3e0a4ec7eb05a09dc2cbc698978f668060e78fd2fadacc7173d` |
 | `safe_slate_recommender-0.3.0.tar.gz` | `0541324c7f1c95167c653c09d7139cc74d00ddb5d139cb4e1996ad0ac566b0c1` |
 
-## Remaining production release gates
+## Remaining 0.3.1 production release gates
 
-- Obtain separate explicit approval for a production PyPI upload, namespaced
-  tag, GitHub Release, and announcement.
+- Merge the reviewed 0.3.1 release workflow and freeze its exact source SHA.
+- Configure the protected `pypi` GitHub Environment and matching pending PyPI
+  Trusted Publisher without creating a long-lived token.
 - Recheck the production PyPI name and immutable artifact set immediately
-  before any approved production upload.
+  before upload.
+- Complete TestPyPI and production PyPI hash matching plus five-platform
+  installation checks in one workflow run.
 
-TestPyPI qualification is complete. The package is platform-qualified for the
-five documented wheel targets, but it is not authorized for a production PyPI
-release. No production upload, tag, GitHub Release, or announcement was
-performed.
+The historical 0.3.0 TestPyPI qualification remains valid for those exact
+artifacts. No production upload, tag, GitHub Release, or announcement has yet
+been performed.

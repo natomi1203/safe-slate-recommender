@@ -3,7 +3,7 @@
 [![CI](https://github.com/natomi1203/safe-slate-recommender/actions/workflows/ci.yml/badge.svg)](https://github.com/natomi1203/safe-slate-recommender/actions/workflows/ci.yml)
 [![Python 3.15](https://img.shields.io/badge/Python-3.15-3776AB.svg?logo=python&logoColor=white)](docs/compatibility.md)
 [![Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![TestPyPI 0.3.0](https://img.shields.io/badge/TestPyPI-0.3.0-orange.svg)](https://test.pypi.org/project/safe-slate-recommender/0.3.0/)
+[![Release candidate 0.3.1](https://img.shields.io/badge/release%20candidate-0.3.1-orange.svg)](PYPI_READINESS.md)
 
 **Safer slate re-ranking for Python, with a Rust search core.**
 
@@ -15,9 +15,9 @@ its final check, return the unchanged baseline and record why.
 `safe-slate-recommender` is built for teams that need more than a high-scoring
 list: they need a bounded search, an auditable decision, and a safe fallback.
 
-> **Release status:** version 0.3.0 is available on TestPyPI and has qualified
-> wheels for Linux x86-64/ARM64, macOS x86-64/ARM64, and Windows x86-64. It is
-> not yet published to production PyPI.
+> **Release status:** version 0.3.1 is being qualified for production PyPI.
+> Version 0.3.0 remains available on TestPyPI; neither version should be
+> presented as a production PyPI release until the release workflow completes.
 
 ## Why use it?
 
@@ -34,7 +34,7 @@ The result is deliberately conservative: the library validates the decision
 contract you give it, but it does not invent calibration, causal lift,
 population support, or production authorization.
 
-## Try version 0.3.0
+## Try the latest qualified build
 
 Python 3.15 is required. Until the production PyPI release is separately
 approved, install the qualified TestPyPI build explicitly:
