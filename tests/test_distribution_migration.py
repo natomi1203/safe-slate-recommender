@@ -1,0 +1,45 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+import tomllib
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_tommyslate_distribution_preserves_python_import_contract() -> None:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    cargo = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+    library = json.loads((ROOT / "library.json").read_text(encoding="utf-8"))
+
+    assert pyproject["project"]["name"] == "tommyslate"
+    assert pyproject["project"]["version"] == "0.4.0"
+    assert cargo["package"]["name"] == "tommyslate"
+    assert cargo["package"]["version"] == "0.4.0"
+    assert library["software_id"] == "tommyslate"
+    assert library["distribution_name"] == "tommyslate"
+    assert library["import_modules"] == ["safe_slate"]
+    assert pyproject["tool"]["maturin"]["module-name"] == "safe_slate._core"
+
+
+def test_old_and_new_cli_names_resolve_to_the_same_entry_point() -> None:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    scripts = pyproject["project"]["scripts"]
+
+    assert scripts["tommyslate-freeze-inputs"] == "safe_slate.external_intake:main"
+    assert scripts["safe-slate-freeze-inputs"] == scripts[
+        "tommyslate-freeze-inputs"
+    ]
+
+
+def test_release_workflow_targets_only_the_new_distribution() -> None:
+    workflow = (ROOT / ".github/workflows/safe-slate-release.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'PACKAGE_NAME: "tommyslate"' in workflow
+    assert 'PACKAGE_VERSION: "0.4.0"' in workflow
+    assert "/p/tommyslate/" in workflow
+    assert "pypi/safe-slate-recommender" not in workflow
+    assert 'f"safe-slate-recommender==' not in workflow

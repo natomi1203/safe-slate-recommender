@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.0
+
+- Adopted TommySlate as the product and PyPI distribution name.
+- Preserved the `safe_slate` Python import and all seven stable public
+  interfaces, so application imports do not change from 0.3.1.
+- Added `tommyslate-freeze-inputs` as the preferred CLI while retaining
+  `safe-slate-freeze-inputs` as a compatibility alias.
+- Retargeted the immutable six-artifact TestPyPI/PyPI workflow and release
+  verification to the `tommyslate` distribution.
+
 ## 0.3.1
 
 - Added a loopback-only tonic gRPC sidecar with immutable model and contract

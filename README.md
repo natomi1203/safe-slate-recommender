@@ -3,7 +3,8 @@
 [![CI](https://github.com/natomi1203/safe-slate-recommender/actions/workflows/ci.yml/badge.svg)](https://github.com/natomi1203/safe-slate-recommender/actions/workflows/ci.yml)
 [![Python 3.15](https://img.shields.io/badge/Python-3.15-3776AB.svg?logo=python&logoColor=white)](docs/compatibility.md)
 [![Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![PyPI](https://img.shields.io/pypi/v/safe-slate-recommender.svg)](https://pypi.org/project/safe-slate-recommender/0.3.1/)
+[![PyPI legacy](https://img.shields.io/pypi/v/safe-slate-recommender.svg?label=legacy%20PyPI)](https://pypi.org/project/safe-slate-recommender/0.3.1/)
+[![TommySlate 0.4.0 candidate](https://img.shields.io/badge/TommySlate-0.4.0%20candidate-orange.svg)](PYPI_READINESS.md)
 
 **Every recommendation, checked.**
 
@@ -16,9 +17,9 @@ TommySlate is a safer slate re-ranker for Python, backed by a Rust search core.
 It is built for teams that need more than a high-scoring list: they need a
 bounded search, an auditable decision, and a safe fallback.
 
-> **Release status:** version 0.3.1 is published on production PyPI. The
-> release workflow matched all six artifact hashes and reinstalled the package
-> successfully on all five supported runners.
+> **Release status:** TommySlate 0.4.0 is the branded-distribution candidate.
+> The compatible 0.3.1 release remains published as `safe-slate-recommender`
+> while the new `tommyslate` artifacts complete TestPyPI qualification.
 
 ## Why use it?
 
@@ -37,16 +38,23 @@ population support, or production authorization.
 
 ## Install
 
-Python 3.15 is required. Add the published package to a uv-managed project:
+Python 3.15 is required. The 0.4.x branded distribution installs with:
+
+```bash
+uv add "tommyslate>=0.4,<0.5"
+```
+
+Until 0.4.0 appears on production PyPI, the qualified 0.3.1 release remains:
 
 ```bash
 uv add "safe-slate-recommender==0.3.1"
 ```
 
-`TommySlate` is the product name. The published distribution remains
-`safe-slate-recommender`, and the stable Python import remains `safe_slate`, so
-existing 0.3.x users do not need to migrate code. The package has no runtime
-Python dependencies. For a source build, follow the [quickstart](docs/quickstart.md)
+The distribution name changes, but the stable Python import remains
+`safe_slate`; existing application code does not need import changes. The
+legacy `safe-slate-freeze-inputs` command also remains as an alias for the new
+`tommyslate-freeze-inputs` command. The package has no runtime Python
+dependencies. For a source build, follow the [quickstart](docs/quickstart.md)
 from a trusted checkout.
 
 ## One-minute example
@@ -1035,7 +1043,7 @@ Replace every placeholder and set privacy_reviewed to true only after the
 privacy review has completed.
 
 ```bash
-uv run safe-slate-freeze-inputs \
+uv run tommyslate-freeze-inputs \
   --spec /private/evaluation/external-inputs.json \
   --output /private/frozen/manifest.json \
   --completion-marker /private/frozen/manifest.complete.json

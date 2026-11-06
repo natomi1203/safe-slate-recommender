@@ -206,7 +206,7 @@ def test_external_intake_cli_reports_ten_inputs(
     monkeypatch.setattr(
         "sys.argv",
         [
-            "safe-slate-freeze-inputs",
+            "tommyslate-freeze-inputs",
             "--spec",
             str(spec_path),
             "--output",

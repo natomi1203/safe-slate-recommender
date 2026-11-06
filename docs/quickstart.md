@@ -1,11 +1,16 @@
 # Quickstart
 
 TommySlate requires Python 3.15 or newer. It ships a compiled Rust extension,
-so install a wheel that matches your operating system and CPU. The current
-PyPI distribution is named `safe-slate-recommender`, and its stable import is
-`safe_slate`.
+so install a wheel that matches your operating system and CPU. The 0.4.x PyPI
+distribution is named `tommyslate`; its stable import remains `safe_slate`.
 
-Version 0.3.1 is published on production PyPI. Add it to a uv-managed project:
+Add the 0.4.x distribution to a uv-managed project:
+
+```bash
+uv add "tommyslate>=0.4,<0.5"
+```
+
+Before 0.4.0 reaches production PyPI, use the qualified legacy distribution:
 
 ```bash
 uv add "safe-slate-recommender==0.3.1"
