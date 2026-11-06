@@ -1,5 +1,9 @@
 /.venv/
 /target/
 /dist/
+**/__pycache__/
+.mypy_cache/
+.pytest_cache/
+*.py[cod]
 *.so
 *.dylib
