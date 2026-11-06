@@ -13,8 +13,18 @@ their paper-specific simulations and immutable aggregate results remain with
 the paper.
 
 The three-way extraction decision and the excluded research topics are
-recorded in `docs/research-integration.md`. That document is a software scope
-map, not a publication result.
+recorded in [`docs/research-integration.md`](docs/research-integration.md).
+The corresponding machine-readable map is
+[`docs/research-lineage.json`](docs/research-lineage.json); it pins the
+publication-registry snapshot separately from the frozen implementation
+revision so that later paper-status changes cannot silently rewrite the
+software's extraction history. These files are software scope maps, not
+publication results.
+
+Software citation metadata is recorded in [`CITATION.cff`](CITATION.cff).
+Third-party papers listed in the lineage are theoretical background only; no
+code was imported from them, and their citation is not an originality claim
+for either the library or the repository-authored manuscripts.
 
 The reusable distribution is licensed under Apache-2.0 by its rights holder.
 Repository-level papers, evidence, protocols, and publication artifacts remain
