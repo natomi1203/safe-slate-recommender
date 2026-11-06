@@ -10,6 +10,9 @@ use crate::constraints::{NativeConstraints, PartitionConstraint, WholeSlatePredi
 use crate::oracle::{self, OracleConfig, SlateInputs};
 use crate::uncertainty::prepare_linear_contrasts;
 
+// Generated tonic clients return tonic::Status by value. Newer clippy versions
+// flag that generated signature, which this crate cannot change safely.
+#[allow(clippy::result_large_err)]
 pub mod proto {
     tonic::include_proto!("safe_slate.v1");
 }
