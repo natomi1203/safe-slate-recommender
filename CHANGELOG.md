@@ -2,6 +2,9 @@
 
 ## 0.3.0
 
+- Qualified five platform wheels and one sdist on TestPyPI through a protected
+  GitHub OIDC deployment, with manifest-bound SHA-256 verification and clean
+  Python 3.15 reinstall smoke tests on every supported runner.
 - Licensed the reusable software distribution under Apache-2.0 while retaining
   CC-BY-4.0 for repository-level research and publication artifacts.
 - Added a documented seven-symbol stable API boundary, promoting the measured
