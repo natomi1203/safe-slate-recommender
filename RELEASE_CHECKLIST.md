@@ -2,8 +2,8 @@
 
 Version 0.4.0 migrates the PyPI distribution name from
 `safe-slate-recommender` to `tommyslate`. It preserves the `safe_slate` import,
-the stable public API, and the legacy intake CLI alias. Production publication
-requires a separate owner approval after TestPyPI qualification.
+the stable public API, and the legacy intake CLI alias. The protected
+TestPyPI and production approvals are complete.
 
 ## Source and migration contract
 
@@ -45,14 +45,14 @@ requires a separate owner approval after TestPyPI qualification.
       the six-artifact manifest.
 - [x] Publish and verify the exact manifest on TestPyPI through OIDC.
 - [x] Reinstall `tommyslate==0.4.0` from TestPyPI on all five target runners.
-- [ ] Obtain explicit owner approval for the production artifact hashes.
+- [x] Obtain explicit owner approval for the production artifact hashes.
 
 ## Production publication
 
-- [ ] Upload the exact TestPyPI-qualified files to PyPI without rebuilding.
-- [ ] Match all production filenames and SHA-256 values to the frozen manifest.
-- [ ] Reinstall `tommyslate==0.4.0` from PyPI on all five target runners.
-- [ ] Replace candidate wording and the legacy badge with the production
+- [x] Upload the exact TestPyPI-qualified files to PyPI without rebuilding.
+- [x] Match all production filenames and SHA-256 values to the frozen manifest.
+- [x] Reinstall `tommyslate==0.4.0` from PyPI on all five target runners.
+- [x] Replace candidate wording and the legacy badge with the production
       TommySlate URL and immutable release evidence.
 
 Do not delete or overwrite `safe-slate-recommender==0.3.1`. Repository rename,

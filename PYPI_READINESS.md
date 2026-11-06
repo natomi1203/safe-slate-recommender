@@ -1,8 +1,8 @@
 # PyPI release evidence
 
-Assessment date: 2026-11-06 (Asia/Tokyo).
+Assessment date: 2026-11-07 (Asia/Tokyo).
 
-## TommySlate 0.4.0 migration candidate
+## TommySlate 0.4.0 production release
 
 Version 0.4.0 changes only the distribution identity and migration-facing
 metadata: users will install `tommyslate`, while Python continues to import
@@ -10,12 +10,11 @@ metadata: users will install `tommyslate`, while Python continues to import
 `safe-slate-freeze-inputs` entry point remains an alias. The stable API and
 runtime behavior are unchanged from 0.3.1.
 
-The release workflow is retargeted to build five `tommyslate` wheels and one
-sdist from an exact source SHA, verify metadata and hashes, qualify the same
-files on TestPyPI, and only then permit production publication. New pending
-Trusted Publishers are required because `tommyslate` is a distinct index
-project. They must bind repository `natomi1203/safe-slate-recommender`, workflow
-`safe-slate-release.yml`, and the protected `testpypi` or `pypi` environment.
+TommySlate 0.4.0 is published on
+[PyPI](https://pypi.org/project/tommyslate/0.4.0/). Publication used protected
+`testpypi` and `pypi` environments and OIDC Trusted Publishing bound to
+repository `natomi1203/safe-slate-recommender` and workflow
+`safe-slate-release.yml`. No long-lived package-index token was created.
 
 The frozen source is `9594cc0fd96a667cc323a3a8e99b42b04d3100db`. A
 [publication-disabled run](https://github.com/natomi1203/safe-slate-recommender/actions/runs/42222485659)
@@ -29,7 +28,13 @@ manifest, and reinstalled `tommyslate==0.4.0` successfully on Linux x86-64 and
 ARM64, macOS x86-64 and ARM64, and Windows x86-64. The project is available at
 [TestPyPI](https://test.pypi.org/project/tommyslate/0.4.0/).
 
-## TommySlate 0.4.0 TestPyPI manifest
+The approved
+[production promotion run](https://github.com/natomi1203/safe-slate-recommender/actions/runs/42233403791)
+recovered that exact TestPyPI-qualified bundle without rebuilding, matched all
+six production filenames and SHA-256 values, and reinstalled
+`tommyslate==0.4.0` successfully on all five target runners.
+
+## TommySlate 0.4.0 production manifest
 
 | Artifact | SHA-256 |
 | --- | --- |
@@ -40,11 +45,10 @@ ARM64, macOS x86-64 and ARM64, and Windows x86-64. The project is available at
 | `tommyslate-0.4.0-cp310-abi3-win_amd64.whl` | `dffd79c9f1e0c52a99ccc960d0782b0a25e34640c00fa160e6dca48f85d6b7ac` |
 | `tommyslate-0.4.0.tar.gz` | `c413975ffe09e7df341cac81986944f6285ea2a20ccf5024db372e6349fdcb5d` |
 
-Wheel archives rebuilt in a later run can have different bytes even at the
-same source SHA. Production promotion therefore recovers the artifact bundle
-from qualification run `42224307122`, verifies the run identity, source SHA,
-manifest, local hashes and TestPyPI hashes, and uploads those exact files. It
-does not rebuild the distribution for production.
+Production PyPI and TestPyPI expose the same six filenames and SHA-256 values
+listed above. The promotion recovered the artifact bundle from qualification
+run `42224307122`, verified the run identity, source SHA, manifest, local hashes
+and TestPyPI hashes, and uploaded those exact files without rebuilding.
 
 ## Version 0.3.1 production release
 
