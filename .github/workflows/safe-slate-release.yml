@@ -576,7 +576,9 @@ jobs:
 
   publish-pypi:
     name: Publish to production PyPI with OIDC
-    if: inputs.publish_pypi == true
+    if: >-
+      always() && inputs.publish_pypi == true &&
+      needs.pypi-preflight.result == 'success'
     needs: pypi-preflight
     runs-on: ubuntu-24.04
     environment:
@@ -601,7 +603,9 @@ jobs:
 
   verify-pypi:
     name: Match production PyPI hashes
-    if: inputs.publish_pypi == true
+    if: >-
+      always() && inputs.publish_pypi == true &&
+      needs.publish-pypi.result == 'success'
     needs: publish-pypi
     runs-on: ubuntu-24.04
     steps:
@@ -649,7 +653,9 @@ jobs:
 
   smoke-test-pypi:
     name: Install from production PyPI on ${{ matrix.platform.name }}
-    if: inputs.publish_pypi == true
+    if: >-
+      always() && inputs.publish_pypi == true &&
+      needs.verify-pypi.result == 'success'
     needs: verify-pypi
     strategy:
       fail-fast: false
