@@ -302,12 +302,25 @@ def test_existing_output_is_never_overwritten(tmp_path: Path) -> None:
         ("serving_changes", True, "safety flags"),
         ("credentials_or_personal_records_emitted", True, "safety flags"),
         ("actual_runtime_seconds", 61.0, "runtime"),
+        ("actual_runtime_seconds", -0.1, "runtime"),
+        ("actual_runtime_seconds", True, "runtime"),
         ("peak_memory_mb", 513, "memory"),
+        ("peak_memory_mb", -1, "memory"),
+        ("peak_memory_mb", True, "memory"),
         ("created_at", "2026-10-01T00:00:00+09:00", "earliest"),
+        ("created_at", "not-a-time", "ISO-8601"),
+        ("created_at", "2026-10-02T00:00:00", "timezone"),
+        ("successful_execution_ids", [], "at least one"),
+        ("successful_execution_ids", [""], "non-empty strings"),
         (
             "successful_execution_ids",
             ["duplicate", "duplicate"],
             "unique",
+        ),
+        (
+            "failed_execution_ids",
+            ["local-evaluation-001"],
+            "may not overlap",
         ),
     ],
 )
@@ -318,6 +331,65 @@ def test_writer_rejects_contract_and_safety_violations(
     with pytest.raises(ValueError, match=message):
         _write(target, **{field: value})
     assert not target.exists()
+
+
+def test_writer_rejects_invalid_component_bindings(tmp_path: Path) -> None:
+    input_manifest, input_verification, contract, readiness, estimate, status = (
+        _components()
+    )
+
+    class EstimateWithoutSerialization:
+        evaluation_contract_digest = contract.contract_digest
+        row_data_digest = readiness.row_data_digest
+
+    cases = [
+        ({"contract": "bad"}, "contract is invalid"),
+        ({"input_manifest": "bad"}, "input manifest is invalid"),
+        ({"input_verification": "bad"}, "input_verification"),
+        ({"readiness": "bad"}, "readiness"),
+        ({"evidence_status": "bad"}, "evidence_status"),
+        (
+            {
+                "readiness": replace(
+                    readiness, evaluation_contract_digest="0" * 64
+                )
+            },
+            "readiness contract digest",
+        ),
+        (
+            {"estimate": replace(estimate, row_data_digest="0" * 64)},
+            "estimate row digest",
+        ),
+        (
+            {"evidence_status": replace(status, contract_digest="0" * 64)},
+            "evidence status contract digest",
+        ),
+        ({"estimate": EstimateWithoutSerialization()}, "expose to_dict"),
+        (
+            {"estimate": None},
+            "requires a completed estimate",
+        ),
+        (
+            {
+                "evidence_status": replace(
+                    status,
+                    overall_state="insufficient_evidence",
+                    decision_eligible=False,
+                    authorized_actions=(),
+                )
+            },
+            "may not contain an estimate",
+        ),
+    ]
+    for index, (overrides, message) in enumerate(cases):
+        target = tmp_path / f"invalid-component-{index}"
+        with pytest.raises(ValueError, match=message):
+            _write(target, **overrides)
+        assert not target.exists()
+
+    missing_parent = tmp_path / "missing" / "bundle"
+    with pytest.raises(ValueError, match="parent directory"):
+        _write(missing_parent)
 
 
 def test_writer_rejects_digest_mismatches_before_writing(tmp_path: Path) -> None:

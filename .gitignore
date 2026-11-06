@@ -1,6 +1,8 @@
 /.venv/
 /target/
 /dist/
+/coverage/
+/.coverage
 **/__pycache__/
 .mypy_cache/
 .pytest_cache/

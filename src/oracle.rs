@@ -606,8 +606,32 @@ fn validate_covariance(covariance: &[Vec<f64>], variances: &[f64]) -> Result<(),
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::constraints::AcceptAll;
+    use crate::constraints::{AcceptAll, WholeSlatePredicate};
     use std::collections::HashMap;
+
+    fn valid_inputs() -> SlateInputs {
+        SlateInputs {
+            rewards: vec![3.0, 2.0, 1.0],
+            safety_means: vec![1.0; 3],
+            safety_variances: vec![0.0; 3],
+            covariance: None,
+            linear_features: None,
+            linear_transformed_features: None,
+        }
+    }
+
+    fn valid_config() -> OracleConfig {
+        OracleConfig {
+            max_items: 2,
+            structural_upper_bound: 3,
+            structural_upper_source: "test_bound".to_owned(),
+            beam_width: 16,
+            max_expansions: 1_000,
+            timeout: Duration::from_secs(1),
+            confidence_radius: 1.96,
+            safety_threshold: 0.0,
+        }
+    }
 
     #[test]
     fn exact_search_is_cardinality_first() {
@@ -642,5 +666,175 @@ mod tests {
     fn covariance_validation_rejects_indefinite_matrix() {
         let covariance = vec![vec![1.0, 2.0], vec![2.0, 1.0]];
         assert!(validate_covariance(&covariance, &[1.0, 1.0]).is_err());
+    }
+
+    #[test]
+    fn input_validation_rejects_every_uncertainty_contract_violation() {
+        let base = valid_inputs();
+        let config = valid_config();
+
+        let mut inputs = base.clone();
+        inputs.safety_means.pop();
+        assert!(validate_inputs(&inputs, &config).is_err());
+
+        for malformed in [
+            OracleConfig {
+                beam_width: 0,
+                ..config.clone()
+            },
+            OracleConfig {
+                max_expansions: 0,
+                ..config.clone()
+            },
+            OracleConfig {
+                structural_upper_bound: 4,
+                ..config.clone()
+            },
+            OracleConfig {
+                confidence_radius: -1.0,
+                ..config.clone()
+            },
+            OracleConfig {
+                safety_threshold: 0.1,
+                ..config.clone()
+            },
+        ] {
+            assert!(validate_inputs(&base, &malformed).is_err());
+        }
+
+        for field in 0..3 {
+            let mut inputs = base.clone();
+            match field {
+                0 => inputs.rewards[0] = f64::NAN,
+                1 => inputs.safety_means[0] = f64::INFINITY,
+                _ => inputs.safety_variances[0] = f64::NEG_INFINITY,
+            }
+            assert!(validate_inputs(&inputs, &config).is_err());
+        }
+
+        let mut inputs = base.clone();
+        inputs.safety_variances[0] = -1.0;
+        assert!(validate_inputs(&inputs, &config).is_err());
+
+        for covariance in [
+            vec![vec![0.0]],
+            vec![vec![f64::NAN, 0.0, 0.0]; 3],
+            vec![vec![-1.0, 0.0, 0.0], vec![0.0; 3], vec![0.0; 3]],
+            vec![vec![1.0, 0.0, 0.0], vec![0.0; 3], vec![0.0; 3]],
+            vec![vec![0.0, 1.0, 0.0], vec![0.0; 3], vec![0.0; 3]],
+            vec![vec![0.0, 1.0, 0.0], vec![1.0, 1.0, 0.0], vec![0.0; 3]],
+        ] {
+            let mut inputs = base.clone();
+            inputs.covariance = Some(covariance);
+            assert!(validate_inputs(&inputs, &config).is_err());
+        }
+
+        let linear_cases = [
+            (Some(vec![vec![1.0]; 3]), None),
+            (Some(vec![vec![1.0]; 2]), Some(vec![vec![0.0]; 2])),
+            (
+                Some(vec![vec![1.0], vec![1.0, 2.0], vec![1.0]]),
+                Some(vec![vec![0.0]; 3]),
+            ),
+            (
+                Some(vec![vec![f64::NAN]; 3]),
+                Some(vec![vec![0.0]; 3]),
+            ),
+            (Some(vec![vec![1.0]; 3]), Some(vec![vec![1.0]; 3])),
+        ];
+        for (features, transformed) in linear_cases {
+            let mut inputs = base.clone();
+            inputs.linear_features = features;
+            inputs.linear_transformed_features = transformed;
+            assert!(validate_inputs(&inputs, &config).is_err());
+        }
+
+        let mut inputs = base;
+        inputs.covariance = Some(vec![vec![0.0; 3]; 3]);
+        inputs.linear_features = Some(vec![vec![1.0]; 3]);
+        inputs.linear_transformed_features = Some(vec![vec![0.0]; 3]);
+        assert!(validate_inputs(&inputs, &config).is_err());
+    }
+
+    struct FailOnSecondCall {
+        calls: usize,
+    }
+
+    impl WholeSlatePredicate for FailOnSecondCall {
+        fn accepts(&mut self, _selected: &[usize]) -> Result<bool, String> {
+            self.calls += 1;
+            if self.calls == 1 {
+                Ok(true)
+            } else {
+                Err("predicate unavailable".to_owned())
+            }
+        }
+    }
+
+    struct WrongBatchLength;
+
+    impl WholeSlatePredicate for WrongBatchLength {
+        fn accepts(&mut self, _selected: &[usize]) -> Result<bool, String> {
+            Ok(false)
+        }
+
+        fn accepts_many(&mut self, _candidates: &[Vec<usize>]) -> Vec<Result<bool, String>> {
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn deadlines_budgets_and_predicate_failures_remain_fail_closed() {
+        let inputs = valid_inputs();
+        let constraints = NativeConstraints::new(3, None, HashMap::new(), vec![]).unwrap();
+
+        let mut deadline_config = valid_config();
+        deadline_config.timeout = Duration::ZERO;
+        let deadline = optimize(
+            &inputs,
+            &deadline_config,
+            &constraints,
+            &mut AcceptAll,
+        )
+        .unwrap();
+        assert!(deadline.deadline_reached);
+        assert_eq!(deadline.stop_reason, "deadline");
+
+        let mut budget_config = valid_config();
+        budget_config.max_expansions = 1;
+        let mut final_failure = FailOnSecondCall { calls: 0 };
+        let fallback = optimize(
+            &inputs,
+            &budget_config,
+            &constraints,
+            &mut final_failure,
+        )
+        .unwrap();
+        assert_eq!(fallback.status, "baseline");
+        assert!(fallback.rechecked);
+        assert!(fallback.predicate_errors > 0);
+
+        let mut wrong_batch = WrongBatchLength;
+        let predicate_error = optimize(
+            &inputs,
+            &valid_config(),
+            &constraints,
+            &mut wrong_batch,
+        )
+        .unwrap();
+        assert!(predicate_error.predicate_errors > 0);
+        assert!(!predicate_error.exact);
+
+        let mut truncated_config = valid_config();
+        truncated_config.beam_width = 1;
+        let truncated = optimize(
+            &inputs,
+            &truncated_config,
+            &constraints,
+            &mut AcceptAll,
+        )
+        .unwrap();
+        assert!(!truncated.exact);
+        assert_eq!(truncated.stop_reason, "beam_truncated");
     }
 }

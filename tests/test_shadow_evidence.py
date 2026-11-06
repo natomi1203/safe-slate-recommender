@@ -148,7 +148,15 @@ def _factorized_manifest():
     )
 
 
-def _run(target: Path, *, contract=None, manifest=None, observations=None, logs=None):
+def _run(
+    target: Path,
+    *,
+    contract=None,
+    manifest=None,
+    observations=None,
+    logs=None,
+    **overrides,
+):
     manifest = manifest or _manifest()
     contract = contract or _contract(
         input_manifest_digest=manifest.manifest_digest,
@@ -157,18 +165,19 @@ def _run(target: Path, *, contract=None, manifest=None, observations=None, logs=
         maximum_fallback_rate=0.0,
     )
     logs = logs or [_shadow_log("r0"), _shadow_log("r1")]
-    return run_no_clobber_shadow_evaluation(
-        target,
-        output_identity=contract.output_namespace,
-        contract=contract,
-        input_manifest=manifest,
-        observed_inputs=observations or _observations(manifest),
-        logs=logs,
-        created_at="2026-10-08T00:00:02+09:00",
-        successful_execution_ids=("shadow-job-001",),
-        peak_memory_mb=128,
-        no_matching_execution_verified=True,
-    )
+    values = {
+        "output_identity": contract.output_namespace,
+        "contract": contract,
+        "input_manifest": manifest,
+        "observed_inputs": observations or _observations(manifest),
+        "logs": logs,
+        "created_at": "2026-10-08T00:00:02+09:00",
+        "successful_execution_ids": ("shadow-job-001",),
+        "peak_memory_mb": 128,
+        "no_matching_execution_verified": True,
+    }
+    values.update(overrides)
+    return run_no_clobber_shadow_evaluation(target, **values)
 
 
 def _rewrite_artifact(target: Path, filename: str, payload: dict[str, object]) -> None:
@@ -208,6 +217,7 @@ def test_shadow_runner_publishes_and_recomputes_source_summary(tmp_path: Path) -
     assert not result.production_latency_claim_authorized
     assert not result.causal_lift_claim_authorized
     assert (target / "complete.json").is_file()
+    assert result.to_dict()["state"] == "evidence_valid"
 
 
 def test_shadow_runner_binds_factorized_uncertainty_snapshot(tmp_path: Path) -> None:
@@ -452,3 +462,95 @@ def test_shadow_output_cap_removes_only_temporary_bundle(tmp_path: Path) -> None
 
     assert not target.exists()
     assert not list(tmp_path.glob(".too-large.tmp-*"))
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"output_identity": "wrong"}, "output identity"),
+        ({"created_at": "not-a-time"}, "ISO-8601"),
+        ({"created_at": "2026-10-08T00:00:02"}, "timezone"),
+        ({"created_at": "2026-10-07T23:59:59+09:00"}, "predates"),
+        ({"peak_memory_mb": True}, "must be an integer"),
+        ({"peak_memory_mb": -1}, "memory exceeds"),
+        ({"peak_memory_mb": 1_025}, "memory exceeds"),
+        ({"successful_execution_ids": ()}, "execution identities"),
+        ({"successful_execution_ids": ("",)}, "non-empty strings"),
+        (
+            {"successful_execution_ids": ("duplicate", "duplicate")},
+            "must be unique",
+        ),
+        (
+            {
+                "successful_execution_ids": ("same",),
+                "failed_execution_ids": ("same",),
+            },
+            "execution identities",
+        ),
+    ],
+)
+def test_shadow_bundle_rejects_malformed_runtime_contract(
+    tmp_path: Path, overrides: dict[str, object], message: str
+) -> None:
+    target = tmp_path / message.replace(" ", "-")
+    with pytest.raises(ValueError, match=message):
+        _run(target, **overrides)
+    assert not target.exists()
+
+
+def test_shadow_runner_requires_existing_output_parent(tmp_path: Path) -> None:
+    target = tmp_path / "missing" / "bundle"
+    with pytest.raises(ValueError, match="parent directory"):
+        _run(target)
+
+
+def test_shadow_contract_binding_rejects_population_cutoff_and_roles(
+    tmp_path: Path,
+) -> None:
+    manifest = _manifest()
+    population_mismatch = _contract(
+        input_manifest_digest=manifest.manifest_digest,
+        population_identity="other-population",
+        minimum_requests=2,
+    )
+    with pytest.raises(ValueError, match="population"):
+        _run(tmp_path / "population", manifest=manifest, contract=population_mismatch)
+
+    cutoff_mismatch = _contract(
+        input_manifest_digest=manifest.manifest_digest,
+        window_end="2026-10-07T00:00:00+09:00",
+        minimum_requests=2,
+    )
+    with pytest.raises(ValueError, match="cutoff"):
+        _run(tmp_path / "cutoff", manifest=manifest, contract=cutoff_mismatch)
+
+    unrelated = create_immutable_input(
+        input_id="other",
+        semantic_role="other_role",
+        canonical_uri="gs://research-inputs/other.jsonl",
+        version="v1",
+        byte_size=1,
+        sha256_digest="a" * 64,
+        snapshot_time="2026-10-08T00:00:00+09:00",
+        temporal_scope="feature",
+        schema_version="1.0",
+    )
+    no_shadow = create_input_manifest(
+        manifest_id="no-shadow",
+        population_identity=manifest.population_identity,
+        created_at=manifest.created_at,
+        feature_cutoff=manifest.feature_cutoff,
+        label_cutoff=manifest.label_cutoff,
+        required_roles=("other_role",),
+        inputs=(unrelated,),
+    )
+    no_shadow_contract = _contract(
+        input_manifest_digest=no_shadow.manifest_digest,
+        minimum_requests=2,
+    )
+    with pytest.raises(ValueError, match="lacks shadow_records"):
+        _run(
+            tmp_path / "no-shadow",
+            manifest=no_shadow,
+            contract=no_shadow_contract,
+        )

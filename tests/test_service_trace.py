@@ -432,3 +432,142 @@ def test_request_recorder_detects_backward_clock() -> None:
     clock.value = -1.0
     with pytest.raises(ValueError, match="backwards"):
         recorder.mark_response()
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda payload: payload.pop("trace_source"), "fields"),
+        (lambda payload: payload.update(extra=True), "fields"),
+        (lambda payload: payload.update(schema_version="2.0"), "unsupported"),
+        (
+            lambda payload: payload.update(completed_at="2026-11-03T11:59:59+09:00"),
+            "precede",
+        ),
+        (lambda payload: payload.update(trace_id="0" * 32), "trace_id"),
+        (lambda payload: payload.update(trace_id="A" * 32), "trace_id"),
+        (lambda payload: payload.update(request_id=""), "nonempty"),
+        (lambda payload: payload.update(trace_source="  "), "nonempty"),
+        (lambda payload: payload.update(proposal_log_sha256="bad"), "SHA-256"),
+        (
+            lambda payload: payload["service_latency_trace"].pop("clock"),
+            "canonical schema",
+        ),
+        (
+            lambda payload: payload["service_latency_trace"].update(complete=False),
+            "complete and canonical",
+        ),
+    ],
+)
+def test_sidecar_loader_rejects_malformed_contract(mutation, message: str) -> None:
+    payload = _completion("r0").to_dict()
+    mutation(payload)
+    with pytest.raises(ValueError, match=message):
+        load_service_trace_completion(payload)
+
+
+def test_service_trace_creation_validates_types_and_timestamps() -> None:
+    proposal = _proposal("r0")
+    with pytest.raises(ValueError, match="ServiceLatencyTrace"):
+        create_service_trace_completion(
+            proposal,
+            trace_id="1" * 32,
+            completed_at="2026-11-03T12:00:01+09:00",
+            trace_source="opentelemetry",
+            service_latency_trace={},  # type: ignore[arg-type]
+        )
+    with pytest.raises(ValueError, match="event_timestamp"):
+        create_service_trace_completion(
+            replace(proposal, event_timestamp=None),
+            trace_id="1" * 32,
+            completed_at="2026-11-03T12:00:01+09:00",
+            trace_source="opentelemetry",
+            service_latency_trace=_trace(),
+        )
+    with pytest.raises(ValueError, match="ISO-8601"):
+        create_service_trace_completion(
+            proposal,
+            trace_id="1" * 32,
+            completed_at="not-a-time",
+            trace_source="opentelemetry",
+            service_latency_trace=_trace(),
+        )
+    with pytest.raises(ValueError, match="ProposalLog"):
+        canonical_proposal_log_bytes([])  # type: ignore[arg-type]
+
+
+def test_sidecar_jsonl_loader_rejects_resource_and_encoding_errors(
+    tmp_path: Path,
+) -> None:
+    valid = tmp_path / "valid.jsonl"
+    valid.write_text(json.dumps(_completion("r0").to_dict()) + "\n", encoding="utf-8")
+    for field, value in [("maximum_records", True), ("maximum_bytes", 0)]:
+        kwargs = {
+            "maximum_records": 1,
+            "maximum_bytes": valid.stat().st_size,
+            field: value,
+        }
+        with pytest.raises(ValueError, match="positive integer"):
+            load_service_trace_completions_jsonl(valid, **kwargs)
+
+    with pytest.raises(ValueError, match="regular file"):
+        load_service_trace_completions_jsonl(
+            tmp_path, maximum_records=1, maximum_bytes=1_000
+        )
+
+    for name, contents, message in [
+        ("empty", b"", "empty"),
+        ("blank", b"\n", "blank"),
+        ("invalid", b"{bad}\n", "invalid service trace JSON"),
+        ("nonfinite", b'{"value":NaN}\n', "non-finite JSON"),
+        ("utf8", b"\xff\xfe\n", "UTF-8"),
+    ]:
+        source = tmp_path / f"{name}.jsonl"
+        source.write_bytes(contents)
+        with pytest.raises(ValueError, match=message):
+            load_service_trace_completions_jsonl(
+                source, maximum_records=1, maximum_bytes=1_000
+            )
+
+
+def test_service_trace_join_validates_collection_identity_and_timestamps() -> None:
+    proposal = _proposal("r0")
+    completion = _completion("r0", proposal=proposal)
+    with pytest.raises(ValueError, match="nonempty"):
+        join_service_trace_completions([], [])
+    with pytest.raises(ValueError, match="invalid record"):
+        join_service_trace_completions(["bad"], [])  # type: ignore[list-item]
+    with pytest.raises(ValueError, match="invalid record"):
+        join_service_trace_completions([proposal], ["bad"])  # type: ignore[list-item]
+    with pytest.raises(ValueError, match="duplicate request"):
+        join_service_trace_completions([proposal], [completion, completion])
+    with pytest.raises(ValueError, match="timestamp mismatch"):
+        join_service_trace_completions(
+            [proposal],
+            [replace(completion, event_timestamp="2026-11-03T12:00:01+09:00")],
+        )
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"serving_mode": "preview"}, "serve or shadow"),
+        ({"window_end": "2026-11-03T00:00:00+09:00"}, "ordered"),
+        ({"minimum_requests": True}, "positive integer"),
+        ({"maximum_response_p95_ms": 0.0}, "finite and positive"),
+        ({"maximum_log_commit_p95_ms": float("inf")}, "finite and positive"),
+        ({"maximum_fallback_rate": True}, "finite and in"),
+        ({"maximum_invalid_record_rate": 1.1}, "finite and in"),
+        ({"maximum_recheck_failure_rate": -0.1}, "finite and in"),
+    ],
+)
+def test_production_service_summary_rejects_invalid_gates(
+    overrides: dict[str, object], message: str
+) -> None:
+    proposal = _proposal("r0")
+    with pytest.raises(ValueError, match=message):
+        _summary(
+            [proposal],
+            [_completion("r0", proposal=proposal)],
+            **overrides,
+        )

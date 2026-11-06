@@ -204,4 +204,36 @@ mod tests {
         assert!(!constraints.accepts(&[0, 1]));
         assert!(!constraints.accepts(&[1, 2]));
     }
+
+    #[test]
+    fn malformed_constraints_fail_closed_and_conflicts_are_normalized() {
+        assert!(
+            NativeConstraints::new(2, Some(vec![0]), HashMap::new(), vec![]).is_err()
+        );
+        assert!(
+            NativeConstraints::new(2, None, HashMap::from([(0, 1)]), vec![]).is_err()
+        );
+        assert!(NativeConstraints::new(2, None, HashMap::new(), vec![(0, 2)]).is_err());
+        assert!(NativeConstraints::new(2, None, HashMap::new(), vec![(1, 1)]).is_err());
+        assert!(
+            NativeConstraints::with_partitions(2, vec![], vec![(0, 2)]).is_err()
+        );
+        assert!(
+            NativeConstraints::with_partitions(2, vec![], vec![(0, 0)]).is_err()
+        );
+        assert!(NativeConstraints::with_partitions(
+            2,
+            vec![PartitionConstraint {
+                ids: vec![0],
+                caps: HashMap::new(),
+            }],
+            vec![],
+        )
+        .is_err());
+
+        let constraints =
+            NativeConstraints::with_partitions(2, vec![], vec![(1, 0)]).unwrap();
+        assert!(!constraints.accepts(&[1, 0]));
+        assert!(!constraints.accepts(&[2]));
+    }
 }

@@ -235,4 +235,42 @@ mod tests {
         );
         assert!(result.is_err());
     }
+
+    #[test]
+    fn malformed_projection_inputs_are_rejected() {
+        assert!(prepare_linear_contrasts(&[], &[vec![1.0], vec![0.0]]).is_err());
+        assert!(prepare_linear_contrasts(&[vec![]], &[]).is_err());
+        assert!(prepare_linear_contrasts(&[vec![1.0]], &[vec![1.0, 0.0], vec![0.0, 1.0]])
+            .is_err());
+        assert!(prepare_linear_contrasts(
+            &[vec![f64::NAN]],
+            &[vec![1.0]],
+        )
+        .is_err());
+        assert!(prepare_linear_contrasts(&[vec![1.0]], &[vec![f64::INFINITY]])
+            .is_err());
+        assert!(prepare_linear_contrasts(&[vec![1.0]], &[vec![-1.0]]).is_err());
+        assert!(prepare_linear_contrasts(
+            &[vec![1.0, 0.0]],
+            &[vec![1.0, 1.0], vec![0.0, 1.0]],
+        )
+        .is_err());
+        assert!(prepare_linear_contrasts(
+            &[vec![1.0, 0.0]],
+            &[vec![0.0, 1.0], vec![1.0, 1.0]],
+        )
+        .is_err());
+
+        assert!(project_linear_contrasts(&[0.0], &[vec![1.0]], &[vec![1.0]], -1.0)
+            .is_err());
+        assert!(project_linear_contrasts(&[], &[vec![1.0]], &[vec![1.0]], 1.0)
+            .is_err());
+        assert!(project_linear_contrasts(
+            &[f64::NAN],
+            &[vec![1.0]],
+            &[vec![1.0]],
+            1.0,
+        )
+        .is_err());
+    }
 }
