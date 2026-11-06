@@ -132,6 +132,7 @@ def test_research_documentation_local_links_resolve() -> None:
     documents = (
         ROOT / "README.md",
         ROOT / "SOFTWARE_PROVENANCE.md",
+        ROOT / "docs" / "full-guide.md",
         ROOT / "docs" / "research-integration.md",
     )
     for document in documents:
