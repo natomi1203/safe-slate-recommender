@@ -1,0 +1,17 @@
+FROM rust:1.85-bookworm AS builder
+
+RUN apt-get update \
+    && apt-get install --yes --no-install-recommends protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /src
+COPY Cargo.toml Cargo.lock build.rs ./
+COPY proto ./proto
+COPY src ./src
+RUN cargo build --locked --release --bin safe-slate-sidecar
+
+FROM python:3.10-slim-bookworm
+
+COPY --from=builder /src/target/release/safe-slate-sidecar /usr/local/bin/safe-slate-sidecar
+USER 65532:65532
+EXPOSE 50051
+ENTRYPOINT ["/usr/local/bin/safe-slate-sidecar"]

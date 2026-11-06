@@ -1,5 +1,6 @@
 mod constraints;
 mod oracle;
+pub mod sidecar;
 mod uncertainty;
 
 use std::collections::{HashMap, HashSet};

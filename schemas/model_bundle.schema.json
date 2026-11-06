@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kauche.com/schemas/safe-slate/model-bundle-v1.json",
+  "title": "Safe-slate frozen model bundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "model_id",
+    "feature_names",
+    "reward_intercept",
+    "reward_coefficients",
+    "safety_intercept",
+    "safety_coefficients",
+    "safety_parameter_covariance",
+    "confidence_radius",
+    "safety_relative_noninferiority",
+    "beam_width",
+    "max_expansions",
+    "training_snapshot_sha256",
+    "feature_dictionary_sha256",
+    "dependency_lock_sha256"
+  ],
+  "properties": {
+    "schema_version": { "const": "safe-slate-model/v1" },
+    "model_id": { "type": "string", "minLength": 1 },
+    "feature_names": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "reward_intercept": { "type": "number" },
+    "reward_coefficients": { "type": "array", "items": { "type": "number" } },
+    "safety_intercept": { "type": "number" },
+    "safety_coefficients": { "type": "array", "items": { "type": "number" } },
+    "safety_parameter_covariance": {
+      "type": "array",
+      "items": { "type": "array", "items": { "type": "number" } }
+    },
+    "confidence_radius": { "type": "number", "minimum": 0 },
+    "safety_relative_noninferiority": { "const": 0.01 },
+    "beam_width": { "type": "integer", "minimum": 1 },
+    "max_expansions": { "type": "integer", "minimum": 1 },
+    "training_snapshot_sha256": { "$ref": "#/$defs/digest" },
+    "feature_dictionary_sha256": { "$ref": "#/$defs/digest" },
+    "dependency_lock_sha256": { "$ref": "#/$defs/digest" }
+  },
+  "$defs": {
+    "digest": { "type": "string", "pattern": "^[a-f0-9]{64}$" }
+  }
+}
