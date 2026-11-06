@@ -43,3 +43,17 @@ def test_release_workflow_targets_only_the_new_distribution() -> None:
     assert "/p/tommyslate/" in workflow
     assert "pypi/safe-slate-recommender" not in workflow
     assert 'f"safe-slate-recommender==' not in workflow
+
+
+def test_production_promotion_reuses_testpypi_qualified_artifacts() -> None:
+    workflow = (ROOT / ".github/workflows/safe-slate-release.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "qualified_run_id:" in workflow
+    assert "Recover exact TestPyPI-qualified artifacts" in workflow
+    assert "actions: read" in workflow
+    assert "TestPyPI differs from recovered manifest" in workflow
+    assert "run-id: ${{ inputs.qualified_run_id }}" in workflow
+    assert "inputs.qualified_run_id == ''" in workflow
+    assert "needs.recover-qualified-release.result == 'success'" in workflow

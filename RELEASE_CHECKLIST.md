@@ -7,7 +7,8 @@ requires a separate owner approval after TestPyPI qualification.
 
 ## Source and migration contract
 
-- [ ] Freeze the exact 40-character merge commit selected from `main`.
+- [x] Freeze source commit
+      `9594cc0fd96a667cc323a3a8e99b42b04d3100db` selected from `main`.
 - [x] `pyproject.toml`, `Cargo.toml`, `CITATION.cff`, and `library.json` agree on
       version `0.4.0`; package metadata identifies distribution `tommyslate`.
 - [x] The native module remains `safe_slate._core`; all seven registered public
@@ -21,29 +22,29 @@ requires a separate owner approval after TestPyPI qualification.
 
 ## Verification for the frozen source SHA
 
-- [ ] `uv sync --frozen` and `uv run maturin develop --release` succeed.
-- [ ] Python tests, mypy, `mypy.stubtest`, and bytecode compilation pass.
-- [ ] Rust tests and warning-free Clippy pass with the locked graph.
-- [ ] Python and Rust coverage gates remain at 100%.
-- [ ] A local wheel and sdist identify `tommyslate==0.4.0`, contain
+- [x] `uv sync --frozen` and `uv run maturin develop --release` succeed.
+- [x] Python tests, mypy, `mypy.stubtest`, and bytecode compilation pass.
+- [x] Rust tests and warning-free Clippy pass with the locked graph.
+- [x] Python and Rust coverage gates remain at 100%.
+- [x] A local wheel and sdist identify `tommyslate==0.4.0`, contain
       `safe_slate`, and pass `twine check`.
-- [ ] Five platform wheels and one sdist are built from one source SHA.
-- [ ] Every wheel installs into an empty Python 3.15 environment, passes
+- [x] Five platform wheels and one sdist are built from one source SHA.
+- [x] Every wheel installs into an empty Python 3.15 environment, passes
       `pip check`, imports `safe_slate`, and completes the deterministic smoke
       test.
 
 ## Index and OIDC readiness
 
-- [ ] Recheck `tommyslate` on PyPI and TestPyPI immediately before upload.
-- [ ] Register pending Trusted Publishers for project `tommyslate`, repository
+- [x] Recheck `tommyslate` on PyPI and TestPyPI immediately before upload.
+- [x] Register pending Trusted Publishers for project `tommyslate`, repository
       `natomi1203/safe-slate-recommender`, workflow
       `safe-slate-release.yml`, and the matching `testpypi`/`pypi` environment.
-- [ ] Confirm both GitHub Environments still require owner review and remain
+- [x] Confirm both GitHub Environments still require owner review and remain
       restricted to `main`; do not downgrade protection.
-- [ ] Run the workflow once with both publication inputs disabled and freeze
+- [x] Run the workflow once with both publication inputs disabled and freeze
       the six-artifact manifest.
-- [ ] Publish and verify the exact manifest on TestPyPI through OIDC.
-- [ ] Reinstall `tommyslate==0.4.0` from TestPyPI on all five target runners.
+- [x] Publish and verify the exact manifest on TestPyPI through OIDC.
+- [x] Reinstall `tommyslate==0.4.0` from TestPyPI on all five target runners.
 - [ ] Obtain explicit owner approval for the production artifact hashes.
 
 ## Production publication
