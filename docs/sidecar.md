@@ -13,3 +13,16 @@ The model identity returned by the service is the SHA-256 of the exact model fil
 The request feature vector must follow `feature_names` in the model bundle. The sidecar computes expected 30-day settled item revenue with the frozen reward coefficients. It computes seven-day purchase probability and a delta-method contrast covariance from the frozen safety coefficients and covariance. Replacement contrasts require a 95% lower bound above the frozen 1% relative non-inferiority threshold.
 
 The caller must apply an end-to-end 10 ms deadline. The sidecar also limits the oracle budget to the request deadline, but model scoring and serialization remain inside the caller's deadline and are not claimed as separately isolated latency.
+
+Build the local image without publishing it:
+
+```bash
+docker build -f Dockerfile.sidecar -t safe-slate-sidecar:local .
+```
+
+The process binds only to loopback. A separate application container can
+reach it only when both containers intentionally share a network namespace,
+as Kubernetes containers in one Pod do. Mount the frozen model file read-only,
+pass its exact contract digest, and keep the caller's unchanged-baseline
+fallback outside the sidecar. Do not expose this service through a host,
+cluster, or public listener.

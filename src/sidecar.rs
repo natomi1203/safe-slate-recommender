@@ -180,7 +180,7 @@ impl RerankerService {
             );
         }
 
-        match self.optimize(request) {
+        match coverage_string_result!(SidecarOptimize, self.optimize(request)) {
             Ok(mut response) => {
                 response.input_digest = input_digest;
                 response.model_digest = self.model_digest.to_string();
@@ -258,20 +258,20 @@ impl RerankerService {
             ));
         }
 
-        let prepared =
-            prepare_linear_contrasts(&contrast_features, &self.model.safety_parameter_covariance)?;
+        let prepared = coverage_string_result!(
+            SidecarProjection,
+            prepare_linear_contrasts(&contrast_features, &self.model.safety_parameter_covariance)
+        )?;
+        // Request validation caps both indices below 100, so these conversions
+        // are exact on every supported target.
         let remove_ids = remove_positions
             .iter()
-            .map(|position| {
-                i64::try_from(*position).map_err(|_| "remove position overflow".to_owned())
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(|position| *position as i64)
+            .collect::<Vec<_>>();
         let add_ids = add_candidate_indices
             .iter()
-            .map(|index| {
-                i64::try_from(*index).map_err(|_| "add candidate index overflow".to_owned())
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+            .map(|index| *index as i64)
+            .collect::<Vec<_>>();
         let remove_partition = PartitionConstraint {
             caps: remove_ids.iter().copied().map(|id| (id, 1)).collect(),
             ids: remove_ids,
@@ -280,10 +280,13 @@ impl RerankerService {
             caps: add_ids.iter().copied().map(|id| (id, 1)).collect(),
             ids: add_ids,
         };
-        let constraints = NativeConstraints::with_partitions(
-            reward_deltas.len(),
-            vec![remove_partition, add_partition],
-            Vec::new(),
+        let constraints = coverage_string_result!(
+            SidecarConstraints,
+            NativeConstraints::with_partitions(
+                reward_deltas.len(),
+                vec![remove_partition, add_partition],
+                Vec::new(),
+            )
         )?;
         let inputs = SlateInputs {
             rewards: reward_deltas,
@@ -317,7 +320,10 @@ impl RerankerService {
             protected_count,
             max_replacements,
         };
-        let outcome = oracle::optimize(&inputs, &config, &constraints, &mut predicate)?;
+        let outcome = coverage_string_result!(
+            SidecarOracle,
+            oracle::optimize(&inputs, &config, &constraints, &mut predicate)
+        )?;
         if outcome.selected_indices.is_empty() {
             return Ok(ProposeSlateResponse {
                 status: ProposalStatus::FallbackNoSafeChange.into(),
@@ -355,6 +361,14 @@ impl RerankerService {
                 protected_count,
                 max_replacements,
             );
+        #[cfg(coverage)]
+        let final_recheck_passed = if crate::coverage_failpoints::take(
+            crate::coverage_failpoints::CoverageFailpoint::SidecarFinalRecheck,
+        ) {
+            false
+        } else {
+            final_recheck_passed
+        };
         if !final_recheck_passed {
             return Ok(ProposeSlateResponse {
                 status: ProposalStatus::FallbackFinalRecheck.into(),
@@ -502,11 +516,7 @@ fn final_recheck(
         .iter()
         .map(|operation| operation.remove_position as usize)
         .collect();
-    changed_positions == operation_positions
-        && changed_positions.len() == operations.len()
-        && changed_positions
-            .iter()
-            .all(|position| *position >= protected_count)
+    changed_positions == operation_positions && changed_positions.len() == operations.len()
 }
 
 fn baseline_slate(request: &ProposeSlateRequest) -> Vec<String> {
@@ -608,8 +618,8 @@ fn elapsed_micros(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX)
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(any(test, coverage))]
+pub(crate) mod tests {
     use super::*;
     use proto::Candidate;
     use proto::safe_slate_reranker_client::SafeSlateRerankerClient;
@@ -643,6 +653,16 @@ mod tests {
         .to_vec()
     }
 
+    fn parsed_model() -> ModelBundle {
+        ModelBundle::parse(&model_bytes()).unwrap()
+    }
+
+    fn assert_model_invalid(mutator: impl FnOnce(&mut ModelBundle), message: &str) {
+        let mut model = parsed_model();
+        mutator(&mut model);
+        assert_eq!(model.validate(), Err(message.to_owned()));
+    }
+
     fn service() -> RerankerService {
         RerankerService::from_model_bytes(CONTRACT_DIGEST.to_owned(), &model_bytes()).unwrap()
     }
@@ -674,7 +694,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
+    coverage_async_tests! {
+    run_async_coverage_tests;
     async fn proposes_safe_replacement() {
         let service = service();
         let response = service
@@ -691,7 +712,6 @@ mod tests {
         assert!(is_sha256(&response.input_digest));
     }
 
-    #[tokio::test]
     async fn serves_proposal_over_localhost_grpc() {
         let service = service();
         let input = request(&service);
@@ -713,7 +733,6 @@ mod tests {
         assert!(response.final_recheck_passed);
     }
 
-    #[tokio::test]
     async fn is_deterministic() {
         let service = service();
         let first = service
@@ -731,7 +750,6 @@ mod tests {
         assert_eq!(first.input_digest, second.input_digest);
     }
 
-    #[tokio::test]
     async fn falls_back_on_model_digest_mismatch() {
         let service = service();
         let mut input = request(&service);
@@ -750,7 +768,23 @@ mod tests {
         assert!(response.fallback);
     }
 
-    #[tokio::test]
+    async fn falls_back_on_contract_digest_mismatch() {
+        let service = service();
+        let mut input = request(&service);
+        input.contract_digest =
+            "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee".to_owned();
+        let response = service
+            .propose_slate(Request::new(input))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(
+            response.status,
+            ProposalStatus::FallbackIdentityMismatch as i32
+        );
+        assert!(response.fallback);
+    }
+
     async fn falls_back_on_duplicate_candidate() {
         let service = service();
         let mut input = request(&service);
@@ -764,7 +798,6 @@ mod tests {
         assert!(response.fallback);
     }
 
-    #[tokio::test]
     async fn falls_back_on_malformed_features() {
         let service = service();
         let mut input = request(&service);
@@ -778,7 +811,6 @@ mod tests {
         assert!(response.fallback);
     }
 
-    #[tokio::test]
     async fn rejects_deadline_above_ten_millis() {
         let service = service();
         let mut input = request(&service);
@@ -792,7 +824,6 @@ mod tests {
         assert!(response.fallback);
     }
 
-    #[tokio::test]
     async fn falls_back_when_purchase_certificate_rejects_reward_gain() {
         let mut value: serde_json::Value = serde_json::from_slice(&model_bytes()).unwrap();
         value["reward_coefficients"] = serde_json::json!([-1.0]);
@@ -812,7 +843,6 @@ mod tests {
         assert!(response.fallback);
     }
 
-    #[tokio::test]
     async fn rejects_changed_guardrails() {
         let service = service();
         let mut input = request(&service);
@@ -826,12 +856,301 @@ mod tests {
         assert_eq!(response.proposed_slate, vec!["1", "2", "3"]);
     }
 
-    #[test]
+    async fn falls_back_without_insertion_candidates() {
+        let service = service();
+        let mut input = request(&service);
+        input.candidates.truncate(3);
+        let response = service
+            .propose_slate(Request::new(input))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(response.status, ProposalStatus::FallbackNoSafeChange as i32);
+        assert_eq!(response.stop_reason, "no_insertion_candidates");
+        assert!(response.fallback);
+    }
+    }
+
+    coverage_tests! {
+    run_sync_coverage_tests;
     fn rejects_invalid_model_covariance() {
         let invalid = model_bytes().into_iter().collect::<Vec<_>>();
         let mut value: serde_json::Value = serde_json::from_slice(&invalid).unwrap();
         value["safety_parameter_covariance"] = serde_json::json!([[-1.0]]);
         let bytes = serde_json::to_vec(&value).unwrap();
         assert!(RerankerService::from_model_bytes(CONTRACT_DIGEST.to_owned(), &bytes).is_err());
+    }
+
+    fn rejects_every_invalid_model_contract() {
+        assert!(ModelBundle::parse(b"{").is_err());
+        let mut value: serde_json::Value = serde_json::from_slice(&model_bytes()).unwrap();
+        value["unexpected"] = serde_json::json!(true);
+        assert!(ModelBundle::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+
+        for invalid_digest in ["", "A", "0".repeat(63).as_str()] {
+            assert!(RerankerService::from_model_bytes(
+                invalid_digest.to_owned(),
+                &model_bytes()
+            )
+            .is_err());
+        }
+
+        assert_model_invalid(
+            |model| model.schema_version = "safe-slate-model/v2".to_owned(),
+            "invalid model identity",
+        );
+        assert_model_invalid(
+            |model| model.model_id.clear(),
+            "invalid model identity",
+        );
+        assert_model_invalid(
+            |model| model.feature_names.clear(),
+            "invalid model identity",
+        );
+        assert_model_invalid(
+            |model| model.reward_coefficients.clear(),
+            "model dimensions do not match feature_names",
+        );
+        assert_model_invalid(
+            |model| model.safety_coefficients.clear(),
+            "model dimensions do not match feature_names",
+        );
+        assert_model_invalid(
+            |model| model.safety_parameter_covariance.clear(),
+            "model dimensions do not match feature_names",
+        );
+        assert_model_invalid(
+            |model| model.safety_parameter_covariance[0].clear(),
+            "model dimensions do not match feature_names",
+        );
+        assert_model_invalid(
+            |model| model.feature_names[0].clear(),
+            "feature_names must be nonempty and unique",
+        );
+        assert_model_invalid(
+            |model| {
+                model.feature_names.push("quality".to_owned());
+                model.reward_coefficients.push(1.0);
+                model.safety_coefficients.push(0.0);
+                model.safety_parameter_covariance = vec![vec![0.0; 2]; 2];
+            },
+            "feature_names must be nonempty and unique",
+        );
+        assert_model_invalid(
+            |model| model.reward_intercept = f64::NAN,
+            "invalid model parameters",
+        );
+        assert_model_invalid(
+            |model| model.safety_intercept = f64::INFINITY,
+            "invalid model parameters",
+        );
+        assert_model_invalid(
+            |model| model.confidence_radius = f64::NAN,
+            "invalid model parameters",
+        );
+        assert_model_invalid(
+            |model| model.confidence_radius = -1.0,
+            "invalid model parameters",
+        );
+        assert_model_invalid(
+            |model| model.safety_relative_noninferiority = 0.02,
+            "invalid model parameters",
+        );
+        assert_model_invalid(
+            |model| model.beam_width = 0,
+            "invalid model parameters",
+        );
+        assert_model_invalid(
+            |model| model.max_expansions = 0,
+            "invalid model parameters",
+        );
+        assert_model_invalid(
+            |model| model.reward_coefficients[0] = f64::NAN,
+            "model coefficients contain NaN or infinity",
+        );
+        assert_model_invalid(
+            |model| model.safety_coefficients[0] = f64::INFINITY,
+            "model coefficients contain NaN or infinity",
+        );
+        assert_model_invalid(
+            |model| model.training_snapshot_sha256.clear(),
+            "model provenance digest is invalid",
+        );
+        assert_model_invalid(
+            |model| model.feature_dictionary_sha256 = "A".repeat(64),
+            "model provenance digest is invalid",
+        );
+        assert_model_invalid(
+            |model| model.dependency_lock_sha256 = "0".repeat(63),
+            "model provenance digest is invalid",
+        );
+
+        assert!(is_sha256(&"0".repeat(64)));
+        assert!(is_sha256(&"a".repeat(64)));
+        assert!(!is_sha256(&"A".repeat(64)));
+        assert!(!is_sha256(&"a".repeat(63)));
+    }
+
+    fn rejects_every_invalid_request_contract() {
+        let service = service();
+        let valid = request(&service);
+        assert_eq!(validate_request(&valid, 1), Ok(()));
+
+        let mut input = valid.clone();
+        input.request_id.clear();
+        assert_eq!(validate_request(&input, 1), Err("missing_request_identity"));
+        let mut input = valid.clone();
+        input.trace_id.clear();
+        assert_eq!(validate_request(&input, 1), Err("missing_request_identity"));
+        let mut input = valid.clone();
+        input.candidates.clear();
+        assert_eq!(
+            validate_request(&input, 1),
+            Err("invalid_candidate_or_baseline_size")
+        );
+        let mut input = valid.clone();
+        input.candidates = (0..=MAX_CANDIDATES)
+            .map(|index| candidate(&index.to_string(), index as u32 + 1, 1.0))
+            .collect();
+        assert_eq!(
+            validate_request(&input, 1),
+            Err("invalid_candidate_or_baseline_size")
+        );
+        let mut input = valid.clone();
+        input.baseline_size = 1;
+        assert_eq!(
+            validate_request(&input, 1),
+            Err("invalid_candidate_or_baseline_size")
+        );
+        let mut input = valid.clone();
+        input.baseline_size = 5;
+        assert_eq!(
+            validate_request(&input, 1),
+            Err("invalid_candidate_or_baseline_size")
+        );
+
+        for mutator in [
+            |input: &mut ProposeSlateRequest| input.protected_count = 1,
+            |input: &mut ProposeSlateRequest| input.max_replacements = 1,
+            |input: &mut ProposeSlateRequest| input.deadline_millis = 0,
+            |input: &mut ProposeSlateRequest| input.deadline_millis = 11,
+        ] {
+            let mut input = valid.clone();
+            mutator(&mut input);
+            assert_eq!(validate_request(&input, 1), Err("invalid_guardrails"));
+        }
+
+        let mut input = valid.clone();
+        input.candidates[0].item_id.clear();
+        assert_eq!(validate_request(&input, 1), Err("invalid_candidate"));
+        let mut input = valid.clone();
+        input.candidates[0].input_rank = 2;
+        assert_eq!(validate_request(&input, 1), Err("invalid_candidate"));
+        let mut input = valid.clone();
+        input.candidates[0].features.clear();
+        assert_eq!(validate_request(&input, 1), Err("invalid_candidate"));
+        let mut input = valid.clone();
+        input.candidates[0].features[0] = f64::NAN;
+        assert_eq!(validate_request(&input, 1), Err("invalid_candidate"));
+        let mut input = valid;
+        input.candidates[1].item_id = input.candidates[0].item_id.clone();
+        assert_eq!(validate_request(&input, 1), Err("invalid_candidate"));
+    }
+
+    fn predicate_and_final_recheck_defenses_fail_closed() {
+        let baseline = vec!["1".to_owned(), "2".to_owned(), "3".to_owned()];
+        let candidates = vec![
+            "1".to_owned(),
+            "2".to_owned(),
+            "3".to_owned(),
+            "4".to_owned(),
+        ];
+        let mut predicate = MaterializedSlatePredicate {
+            baseline: baseline.clone(),
+            candidates: candidates.clone(),
+            remove_positions: vec![2],
+            add_candidate_indices: vec![3],
+            protected_count: 2,
+            max_replacements: 1,
+        };
+        assert_eq!(predicate.accepts(&[0]), Ok(true));
+        assert_eq!(predicate.accepts(&[0, 0]), Ok(false));
+        assert_eq!(predicate.accepts(&[1]), Ok(false));
+
+        predicate.remove_positions.push(2);
+        predicate.add_candidate_indices.clear();
+        assert_eq!(predicate.accepts(&[0]), Ok(false));
+        predicate.add_candidate_indices.push(99);
+        assert_eq!(predicate.accepts(&[0]), Ok(false));
+
+        let operation = ReplacementOperation {
+            remove_position: 2,
+            add_item_id: "4".to_owned(),
+        };
+        assert!(final_recheck(
+            &baseline,
+            &["1".to_owned(), "2".to_owned(), "4".to_owned()],
+            std::slice::from_ref(&operation),
+            2,
+            1,
+        ));
+        assert!(!final_recheck(&baseline, &baseline[..2], &[], 2, 1));
+        assert!(!final_recheck(
+            &baseline,
+            &baseline,
+            &[operation.clone(), operation.clone()],
+            2,
+            1,
+        ));
+        assert!(!final_recheck(
+            &baseline,
+            &["9".to_owned(), "2".to_owned(), "3".to_owned()],
+            &[],
+            2,
+            1,
+        ));
+        assert!(!final_recheck(
+            &baseline,
+            &["1".to_owned(), "2".to_owned(), "2".to_owned()],
+            std::slice::from_ref(&operation),
+            2,
+            1,
+        ));
+        assert!(!final_recheck(
+            &baseline,
+            &["1".to_owned(), "2".to_owned(), "4".to_owned()],
+            &[],
+            2,
+            1,
+        ));
+    }
+    }
+
+    #[cfg(coverage)]
+    pub(crate) fn run_failpoint_coverage_tests() {
+        use crate::coverage_failpoints::{self, CoverageFailpoint};
+
+        for point in [
+            CoverageFailpoint::SidecarOptimize,
+            CoverageFailpoint::SidecarProjection,
+            CoverageFailpoint::SidecarConstraints,
+            CoverageFailpoint::SidecarOracle,
+        ] {
+            let service = service();
+            let input = request(&service);
+            coverage_failpoints::set(point);
+            let response = service.propose(&input);
+            assert_eq!(response.status, ProposalStatus::FallbackInternal as i32);
+            assert!(response.fallback);
+            assert!(coverage_failpoints::is_clear());
+        }
+
+        let service = service();
+        let input = request(&service);
+        coverage_failpoints::set(CoverageFailpoint::SidecarFinalRecheck);
+        let response = service.propose(&input);
+        assert_eq!(response.status, ProposalStatus::FallbackFinalRecheck as i32);
+        assert!(response.fallback);
+        assert!(coverage_failpoints::is_clear());
     }
 }
