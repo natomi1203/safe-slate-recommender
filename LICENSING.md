@@ -1,6 +1,6 @@
 # Licensing boundary
 
-The `safe-slate-recommender` distribution, including its Python package, Rust
+The `tommyslate` distribution, including its Python package, Rust
 backend, package-local schemas, tests, benchmarks, and user documentation, is
 licensed under the Apache License 2.0. See `LICENSE` in this directory.
 

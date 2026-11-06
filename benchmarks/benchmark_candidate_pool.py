@@ -187,7 +187,7 @@ def main() -> None:
 
     report = {
         "schema_version": "1.0",
-        "library_version": version("safe-slate-recommender"),
+        "library_version": version("tommyslate"),
         "environment": {
             "python": sys.version.split()[0],
             "platform": platform.platform(),

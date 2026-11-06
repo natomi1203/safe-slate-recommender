@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify and inventory a complete safe-slate-recommender release set."""
+"""Verify and inventory a complete TommySlate release set."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ import zipfile
 from pathlib import Path
 
 
-PROJECT = "safe-slate-recommender"
-DIST_PREFIX = "safe_slate_recommender"
+PROJECT = "tommyslate"
+DIST_PREFIX = "tommyslate"
 EXPECTED_WHEEL_PLATFORMS = {
     "manylinux_2_28_x86_64",
     "manylinux_2_28_aarch64",
@@ -196,7 +196,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("artifact_dir", type=Path)
     parser.add_argument("--source-sha", required=True)
-    parser.add_argument("--version", default="0.3.1")
+    parser.add_argument("--version", default="0.4.0")
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
     output_dir = args.output_dir or args.artifact_dir

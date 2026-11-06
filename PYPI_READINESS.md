@@ -2,6 +2,26 @@
 
 Assessment date: 2026-11-06 (Asia/Tokyo).
 
+## TommySlate 0.4.0 migration candidate
+
+Version 0.4.0 changes only the distribution identity and migration-facing
+metadata: users will install `tommyslate`, while Python continues to import
+`safe_slate`. The new preferred CLI is `tommyslate-freeze-inputs`; the existing
+`safe-slate-freeze-inputs` entry point remains an alias. The stable API and
+runtime behavior are unchanged from 0.3.1.
+
+The release workflow is retargeted to build five `tommyslate` wheels and one
+sdist from an exact source SHA, verify metadata and hashes, qualify the same
+files on TestPyPI, and only then permit production publication. New pending
+Trusted Publishers are required because `tommyslate` is a distinct index
+project. They must bind repository `natomi1203/safe-slate-recommender`, workflow
+`safe-slate-release.yml`, and the protected `testpypi` or `pypi` environment.
+
+Neither index has received a TommySlate artifact yet. A 404 name check is not
+a reservation; both names must be checked again immediately before the first
+OIDC upload. The complete 0.4.0 manifest and source SHA will be recorded here
+after a publication-disabled matrix run succeeds.
+
 ## Version 0.3.1 production release
 
 Version 0.3.1 is published on
