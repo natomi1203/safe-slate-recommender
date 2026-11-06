@@ -101,11 +101,8 @@ pub fn project_linear_contrasts(
     let operation_count = contrast_features.len();
     let mut covariance = vec![vec![0.0; operation_count]; operation_count];
     for (left, left_features) in contrast_features.iter().enumerate() {
-        for (right, right_transformed_features) in prepared
-            .transformed_features
-            .iter()
-            .enumerate()
-            .skip(left)
+        for (right, right_transformed_features) in
+            prepared.transformed_features.iter().enumerate().skip(left)
         {
             let value = left_features
                 .iter()
