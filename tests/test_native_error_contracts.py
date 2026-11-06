@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 
 import pytest
@@ -86,7 +87,10 @@ def test_empty_replacement_set_is_an_exact_baseline() -> None:
     )
     assert result.exact
     assert result.materialized_slate == [10, 11]
-    assert "CertifiedReplacementResult" in repr(result)
+    assert repr(result) == (
+        "CertifiedReplacementResult(status='baseline', k_lower=0, k_upper=0, "
+        "reward=0.000000, rechecked=true)"
+    )
 
 
 def test_native_result_and_projection_representations_are_stable() -> None:
@@ -104,9 +108,20 @@ def test_native_result_and_projection_representations_are_stable() -> None:
     prepared = prepare_linear_contrast_marginals_f64le(
         contrast_features=[[1.0]], parameter_covariance=[[0.01]]
     )
-    assert "CertifiedOracleResult" in repr(result)
-    assert "ProjectedContrastUncertainty" in repr(projection)
-    assert "PreparedLinearContrastMarginals" in repr(prepared)
+    assert repr(result) == (
+        "CertifiedOracleResult(status='exact', k_lower=1, k_upper=1, "
+        "reward=1.000000, rechecked=true)"
+    )
+    assert type(result).__repr__.__name__ == "__repr__"
+    assert type(result).__repr__.__module__ == "safe_slate._core"
+    assert str(inspect.signature(result.__repr__)) == "()"
+    assert repr(projection) == (
+        "ProjectedContrastUncertainty(operation_count=1, feature_dimension=1)"
+    )
+    assert repr(prepared) == (
+        "PreparedLinearContrastMarginals(operation_count=1, feature_dimension=1, "
+        "matrix_digest_encoding='f64le-v1')"
+    )
     assert project_linear_contrast_marginals([[1.0]], [[0.01]]) == [0.01]
 
 

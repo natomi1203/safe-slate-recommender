@@ -255,9 +255,10 @@ fn greedy_floor(
         match predicate.accepts(&state.selected) {
             Ok(true) => {
                 selected = state.selected.clone();
-                // Every accepted greedy step adds one item to the incumbent.
-                *incumbent = state;
-                stats.incumbent_updates += 1;
+                if better(&state, incumbent) {
+                    *incumbent = state;
+                    stats.incumbent_updates += 1;
+                }
             }
             Ok(false) => {}
             Err(_) => record_predicate_error(stats),
@@ -625,7 +626,7 @@ fn validate_covariance(covariance: &[Vec<f64>], variances: &[f64]) -> Result<(),
     Ok(())
 }
 
-#[cfg(any(test, feature = "coverage-internals"))]
+#[cfg(any(test, coverage))]
 pub(crate) mod tests {
     use super::*;
     use crate::constraints::{AcceptAll, WholeSlatePredicate};
@@ -655,8 +656,9 @@ pub(crate) mod tests {
         }
     }
 
-    #[cfg_attr(test, test)]
-    pub(crate) fn exact_search_is_cardinality_first() {
+    coverage_tests! {
+    run_validation_coverage_tests;
+    fn exact_search_is_cardinality_first() {
         let inputs = SlateInputs {
             rewards: vec![100.0, -1_000.0, 2.0],
             safety_means: vec![1.0, 1.0, 1.0],
@@ -699,8 +701,7 @@ pub(crate) mod tests {
         assert_eq!(tied.selected_indices, vec![0]);
     }
 
-    #[cfg_attr(test, test)]
-    pub(crate) fn covariance_validation_rejects_indefinite_matrix() {
+    fn covariance_validation_rejects_indefinite_matrix() {
         let covariance = vec![vec![1.0, 2.0], vec![2.0, 1.0]];
         assert!(validate_covariance(&covariance, &[1.0, 1.0]).is_err());
 
@@ -708,8 +709,7 @@ pub(crate) mod tests {
         assert!(validate_covariance(&zero_pivot_cross_term, &[0.0, 1.0]).is_err());
     }
 
-    #[cfg_attr(test, test)]
-    pub(crate) fn input_validation_rejects_every_uncertainty_contract_violation() {
+    fn input_validation_rejects_every_uncertainty_contract_violation() {
         let base = valid_inputs();
         let config = valid_config();
 
@@ -792,6 +792,7 @@ pub(crate) mod tests {
         inputs.linear_transformed_features = Some(vec![vec![0.0]; 3]);
         assert!(validate_inputs(&inputs, &config).is_err());
     }
+    }
 
     struct FailOnSecondCall {
         calls: usize,
@@ -835,8 +836,31 @@ pub(crate) mod tests {
         }
     }
 
-    #[cfg_attr(test, test)]
-    pub(crate) fn deadlines_budgets_and_predicate_failures_remain_fail_closed() {
+    coverage_tests! {
+    run_search_coverage_tests;
+    fn greedy_preserves_a_better_incumbent() {
+        let inputs = valid_inputs();
+        let constraints = NativeConstraints::new(3, None, HashMap::new(), vec![]).unwrap();
+        let mut config = valid_config();
+        config.max_items = 1;
+        let mut incumbent = evaluate(&inputs, &config, vec![0, 1]);
+        let incumbent_before = incumbent.clone();
+        let mut stats = SearchStats::default();
+        greedy_floor(
+            &inputs,
+            &config,
+            &constraints,
+            &mut AcceptAll,
+            Instant::now() + Duration::from_secs(1),
+            &mut incumbent,
+            &mut stats,
+        );
+        assert_eq!(incumbent.selected, incumbent_before.selected);
+        assert_eq!(incumbent.reward, incumbent_before.reward);
+        assert_eq!(stats.incumbent_updates, 0);
+    }
+
+    fn deadlines_budgets_and_predicate_failures_remain_fail_closed() {
         let inputs = valid_inputs();
         let constraints = NativeConstraints::new(3, None, HashMap::new(), vec![]).unwrap();
 
@@ -935,5 +959,6 @@ pub(crate) mod tests {
             &mut expire_before_batch,
         );
         assert_eq!(stats.stop_reason, "deadline");
+    }
     }
 }

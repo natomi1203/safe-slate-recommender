@@ -36,15 +36,20 @@ def _python_report(
 def _rust_report(
     *, lines: float = 100.0, functions: float = 100.0, regions: float = 100.0
 ) -> dict[str, object]:
+    def metric(percent: float) -> dict[str, object]:
+        count = 10_000
+        covered = round(count * percent / 100.0)
+        return {"count": count, "covered": covered, "percent": percent}
+
     return {
         "type": "llvm.coverage.json.export",
         "version": "3.1.0",
         "data": [
             {
                 "totals": {
-                    "lines": {"percent": lines},
-                    "functions": {"percent": functions},
-                    "regions": {"percent": regions},
+                    "lines": metric(lines),
+                    "functions": metric(functions),
+                    "regions": metric(regions),
                 }
             }
         ],
@@ -94,7 +99,7 @@ def test_python_report_requires_the_exact_source_file_set() -> None:
             {**_python_report(), "meta": {"format": 2, "branch_coverage": True}},
             "format 3",
         ),
-        ({**_rust_report(), "version": "2.0.0"}, "schema 3.x"),
+        ({**_rust_report(), "version": "3.2.0"}, "schema 3.1.0"),
     ],
 )
 def test_unknown_report_schema_is_rejected(
@@ -116,6 +121,45 @@ def test_missing_and_corrupt_json_fail_closed(tmp_path: Path) -> None:
     corrupt.write_text("{not-json", encoding="utf-8")
     with pytest.raises(coverage_gate.CoverageGateError, match="invalid coverage JSON"):
         coverage_gate._read_report(corrupt)
+
+
+def test_rust_percent_cannot_hide_an_uncovered_item() -> None:
+    report = _rust_report()
+    totals = report["data"][0]["totals"]  # type: ignore[index]
+    totals["lines"] = {"count": 100, "covered": 99, "percent": 100.0}
+    with pytest.raises(coverage_gate.CoverageGateError, match="inconsistent"):
+        coverage_gate.evaluate_rust_report(report)
+
+
+def test_rust_notcovered_must_match_counts() -> None:
+    report = _rust_report()
+    totals = report["data"][0]["totals"]  # type: ignore[index]
+    totals["regions"] = {
+        "count": 100,
+        "covered": 100,
+        "notcovered": 1,
+        "percent": 100.0,
+    }
+    with pytest.raises(coverage_gate.CoverageGateError, match="notcovered"):
+        coverage_gate.evaluate_rust_report(report)
+
+
+@pytest.mark.parametrize(
+    "metric, message",
+    [
+        ({"count": 0, "covered": 0, "percent": 100.0}, "count must be positive"),
+        ({"count": 1, "covered": 2, "percent": 100.0}, "cannot exceed"),
+        ({"count": True, "covered": 1, "percent": 100.0}, "nonnegative integer"),
+    ],
+)
+def test_invalid_rust_counts_fail_closed(
+    metric: dict[str, object], message: str
+) -> None:
+    report = _rust_report()
+    totals = report["data"][0]["totals"]  # type: ignore[index]
+    totals["lines"] = metric
+    with pytest.raises(coverage_gate.CoverageGateError, match=message):
+        coverage_gate.evaluate_rust_report(report)
 
 
 def test_expected_python_files_discovers_only_python_sources(tmp_path: Path) -> None:

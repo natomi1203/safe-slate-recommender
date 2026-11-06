@@ -40,11 +40,15 @@ jobs:
         run: |
           cargo +"$RUST_VERSION" test --locked --all-targets
           cargo +"$RUST_VERSION" clippy --locked --all-targets -- -D warnings
+          uv run python -c "import safe_slate._core as core; assert not hasattr(core, '_run_coverage_suite')"
       - name: Verify local distributions
         run: |
           uv run maturin build --release --locked --compatibility pypi -i python3.15 --out dist
           uv run maturin sdist --out dist
           uvx --from twine==6.2.0 twine check dist/*
+          uv venv "$RUNNER_TEMP/wheel-check" --python python3.15
+          uv pip install --python "$RUNNER_TEMP/wheel-check/bin/python" --no-deps dist/*.whl
+          "$RUNNER_TEMP/wheel-check/bin/python" -c "import safe_slate._core as core; assert not hasattr(core, '_run_coverage_suite')"
 
   coverage:
     runs-on: ubuntu-24.04
@@ -72,7 +76,7 @@ jobs:
           mkdir -p coverage
           cargo llvm-cov clean --workspace
           eval "$(cargo llvm-cov show-env --sh)"
-          uv run maturin develop --features pyo3/extension-module,coverage-internals
+          uv run maturin develop
           uv run coverage run -m pytest
           uv run python -c "import safe_slate._core as core; core._run_coverage_suite()"
           uv run coverage report --show-missing | tee coverage/python.txt

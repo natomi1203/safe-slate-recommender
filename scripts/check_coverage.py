@@ -50,6 +50,13 @@ def _percentage(mapping: dict[str, Any], field: str, label: str) -> float:
     return percentage
 
 
+def _count(mapping: dict[str, Any], field: str, label: str) -> int:
+    value = mapping.get(field)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise CoverageGateError(f"{label}.{field} must be a nonnegative integer")
+    return value
+
+
 def _require_minimum(
     failures: list[str], label: str, actual: float, minimum: float
 ) -> None:
@@ -103,16 +110,37 @@ def evaluate_rust_report(
     if report.get("type") != "llvm.coverage.json.export":
         raise CoverageGateError("Rust coverage report has an unknown type")
     version = report.get("version")
-    if not isinstance(version, str) or not version.startswith("3."):
-        raise CoverageGateError("Rust coverage report must use LLVM JSON schema 3.x")
+    if version != "3.1.0":
+        raise CoverageGateError("Rust coverage report must use LLVM JSON schema 3.1.0")
     data = report.get("data")
     if not isinstance(data, list) or len(data) != 1:
         raise CoverageGateError("Rust coverage report must contain exactly one data set")
     totals = _mapping(_mapping(data[0], "rust.data[0]").get("totals"), "rust.totals")
     values: dict[str, float] = {}
     for metric in ("lines", "functions", "regions"):
-        metric_data = _mapping(totals.get(metric), f"rust.totals.{metric}")
-        values[metric] = _percentage(metric_data, "percent", f"rust.totals.{metric}")
+        label = f"rust.totals.{metric}"
+        metric_data = _mapping(totals.get(metric), label)
+        count = _count(metric_data, "count", label)
+        covered = _count(metric_data, "covered", label)
+        if count == 0:
+            raise CoverageGateError(f"{label}.count must be positive")
+        if covered > count:
+            raise CoverageGateError(f"{label}.covered cannot exceed count")
+        if "notcovered" in metric_data:
+            not_covered = _count(metric_data, "notcovered", label)
+            if not_covered != count - covered:
+                raise CoverageGateError(
+                    f"{label}.notcovered is inconsistent with covered/count"
+                )
+        percentage = _percentage(metric_data, "percent", label)
+        expected_percentage = 100.0 * covered / count
+        if not math.isclose(
+            percentage, expected_percentage, rel_tol=0.0, abs_tol=1e-12
+        ):
+            raise CoverageGateError(
+                f"{label}.percent is inconsistent with covered/count"
+            )
+        values[metric] = percentage
 
     failures: list[str] = []
     _require_minimum(failures, "Rust lines", values["lines"], RUST_LINE_MIN)

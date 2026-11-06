@@ -64,8 +64,10 @@ pub fn prepare_linear_contrasts(
             .map(|(feature, transformed_feature)| (feature * transformed_feature).abs())
             .sum::<f64>()
             .max(1.0);
-        validate_projected_variance(variance, 1e-10 * scale)
-            .expect("a validated PSD covariance produced a negative quadratic form");
+        coverage_string_result!(
+            UncertaintyPreparedVariance,
+            validate_projected_variance(variance, 1e-10 * scale)
+        )?;
         variances.push(variance.max(0.0));
     }
     Ok(PreparedLinearContrasts {
@@ -120,12 +122,16 @@ pub fn project_linear_contrasts(
         .fold(1.0_f64, f64::max);
     let tolerance = 1e-10 * covariance_scale;
     for (index, row) in covariance.iter_mut().enumerate() {
-        validate_projected_variance(row[index], tolerance)
-            .expect("a validated PSD covariance produced a negative projected diagonal");
+        coverage_string_result!(
+            UncertaintyProjectedDiagonal,
+            validate_projected_variance(row[index], tolerance)
+        )?;
         row[index] = prepared.variances[index];
     }
-    validate_symmetric_psd(&covariance, "projected covariance")
-        .expect("a linear projection of a PSD covariance must remain PSD");
+    coverage_string_result!(
+        UncertaintyProjectedPsd,
+        validate_symmetric_psd(&covariance, "projected covariance")
+    )?;
 
     let individual_lcbs = safety_means
         .iter()
@@ -211,12 +217,13 @@ pub(crate) fn validate_symmetric_psd(matrix: &[Vec<f64>], name: &str) -> Result<
     Ok(())
 }
 
-#[cfg(any(test, feature = "coverage-internals"))]
+#[cfg(any(test, coverage))]
 pub(crate) mod tests {
     use super::*;
 
-    #[cfg_attr(test, test)]
-    pub(crate) fn projects_shared_parameter_uncertainty() {
+    coverage_tests! {
+    run_coverage_tests;
+    fn projects_shared_parameter_uncertainty() {
         let projection = project_linear_contrasts(
             &[0.3, 0.2],
             &[vec![1.0, 1.0], vec![1.0, -1.0]],
@@ -231,8 +238,7 @@ pub(crate) mod tests {
         assert!((projection.individual_lcbs[0] + 3.7).abs() < 1e-12);
     }
 
-    #[cfg_attr(test, test)]
-    pub(crate) fn rejects_indefinite_parameter_covariance() {
+    fn rejects_indefinite_parameter_covariance() {
         let result = project_linear_contrasts(
             &[0.1],
             &[vec![1.0, 0.0]],
@@ -242,8 +248,7 @@ pub(crate) mod tests {
         assert!(result.is_err());
     }
 
-    #[cfg_attr(test, test)]
-    pub(crate) fn malformed_projection_inputs_are_rejected() {
+    fn malformed_projection_inputs_are_rejected() {
         assert!(prepare_linear_contrasts(&[], &[vec![1.0], vec![0.0]]).is_err());
         assert!(prepare_linear_contrasts(&[vec![]], &[]).is_err());
         assert!(prepare_linear_contrasts(&[vec![1.0]], &[vec![1.0, 0.0], vec![0.0, 1.0]]).is_err());
@@ -265,5 +270,6 @@ pub(crate) mod tests {
 
         assert!(validate_symmetric_psd(&[vec![1.0], vec![0.0]], "matrix").is_err());
         assert!(validate_projected_variance(-1.0, 0.0).is_err());
+    }
     }
 }
