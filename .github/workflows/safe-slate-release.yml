@@ -7,6 +7,11 @@ on:
         description: Exact 40-character source commit SHA to build
         required: true
         type: string
+      qualified_run_id:
+        description: Prior successful TestPyPI run to promote without rebuilding
+        required: false
+        default: ""
+        type: string
       publish_testpypi:
         description: Publish the verified artifacts to TestPyPI
         required: true
@@ -35,6 +40,7 @@ jobs:
       - name: Validate source SHA format
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
+          QUALIFIED_RUN_ID: ${{ inputs.qualified_run_id }}
           PUBLISH_TESTPYPI: ${{ inputs.publish_testpypi }}
           PUBLISH_PYPI: ${{ inputs.publish_pypi }}
         run: |
@@ -42,8 +48,20 @@ jobs:
             echo "source_sha must be a lowercase 40-character commit SHA" >&2
             exit 1
           fi
-          if [[ "$PUBLISH_PYPI" == "true" && "$PUBLISH_TESTPYPI" != "true" ]]; then
-            echo "production PyPI publication requires the same run to publish and verify TestPyPI first" >&2
+          if [[ -n "$QUALIFIED_RUN_ID" && ! "$QUALIFIED_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "qualified_run_id must be empty or a numeric GitHub Actions run ID" >&2
+            exit 1
+          fi
+          if [[ -n "$QUALIFIED_RUN_ID" && "$PUBLISH_TESTPYPI" == "true" ]]; then
+            echo "a promotion run must reuse TestPyPI artifacts without publishing new ones" >&2
+            exit 1
+          fi
+          if [[ -n "$QUALIFIED_RUN_ID" && "$PUBLISH_PYPI" != "true" ]]; then
+            echo "qualified_run_id is accepted only for production promotion" >&2
+            exit 1
+          fi
+          if [[ "$PUBLISH_PYPI" == "true" && "$PUBLISH_TESTPYPI" != "true" && -z "$QUALIFIED_RUN_ID" ]]; then
+            echo "production requires TestPyPI qualification in this run or qualified_run_id" >&2
             exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -75,6 +93,7 @@ jobs:
 
   build-wheels:
     name: Build and smoke ${{ matrix.platform.name }}
+    if: inputs.qualified_run_id == ''
     needs: validate-source
     strategy:
       fail-fast: false
@@ -171,6 +190,7 @@ jobs:
           retention-days: 14
 
   build-sdist:
+    if: inputs.qualified_run_id == ''
     runs-on: ubuntu-24.04
     needs: validate-source
     steps:
@@ -197,6 +217,7 @@ jobs:
 
   aggregate:
     name: Verify complete release set
+    if: inputs.qualified_run_id == ''
     needs: [build-wheels, build-sdist]
     runs-on: ubuntu-24.04
     steps:
@@ -239,7 +260,7 @@ jobs:
 
   testpypi-preflight:
     name: Check TestPyPI retry safety
-    if: inputs.publish_testpypi == true
+    if: inputs.publish_testpypi == true && inputs.qualified_run_id == ''
     needs: aggregate
     runs-on: ubuntu-24.04
     steps:
@@ -278,7 +299,7 @@ jobs:
 
   publish-testpypi:
     name: Publish to TestPyPI with OIDC
-    if: inputs.publish_testpypi == true
+    if: inputs.publish_testpypi == true && inputs.qualified_run_id == ''
     needs: testpypi-preflight
     runs-on: ubuntu-24.04
     environment:
@@ -304,7 +325,7 @@ jobs:
 
   verify-testpypi:
     name: Match TestPyPI hashes
-    if: inputs.publish_testpypi == true
+    if: inputs.publish_testpypi == true && inputs.qualified_run_id == ''
     needs: publish-testpypi
     runs-on: ubuntu-24.04
     steps:
@@ -352,7 +373,7 @@ jobs:
 
   smoke-test-testpypi:
     name: Install from TestPyPI on ${{ matrix.platform.name }}
-    if: inputs.publish_testpypi == true
+    if: inputs.publish_testpypi == true && inputs.qualified_run_id == ''
     needs: verify-testpypi
     strategy:
       fail-fast: false
@@ -416,10 +437,108 @@ jobs:
           subprocess.run([python, "-c", smoke], cwd=environment, check=True)
           PY
 
+  recover-qualified-release:
+    name: Recover exact TestPyPI-qualified artifacts
+    if: inputs.qualified_run_id != '' && inputs.publish_pypi == true
+    needs: validate-source
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Verify source workflow run identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUALIFIED_RUN_ID: ${{ inputs.qualified_run_id }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$QUALIFIED_RUN_ID")"
+          test "$(jq -r .status <<<"$run_json")" = "completed"
+          test "$(jq -r .conclusion <<<"$run_json")" = "success"
+          test "$(jq -r .event <<<"$run_json")" = "workflow_dispatch"
+          test "$(jq -r .head_branch <<<"$run_json")" = "main"
+          test "$(jq -r .head_sha <<<"$run_json")" = "$SOURCE_SHA"
+          test "$(jq -r .path <<<"$run_json")" = ".github/workflows/safe-slate-release.yml"
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: qualified-release-${{ inputs.source_sha }}
+          path: release
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.qualified_run_id }}
+      - name: Match recovered files and TestPyPI to the frozen manifest
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          from urllib.request import urlopen
+
+          root = Path("release")
+          manifest = json.loads((root / "release-manifest.json").read_text())
+          if manifest.get("schema_version") != "1.0.0":
+              raise SystemExit("unsupported release manifest schema")
+          if manifest.get("project") != os.environ["PACKAGE_NAME"]:
+              raise SystemExit("release manifest project mismatch")
+          if manifest.get("version") != os.environ["PACKAGE_VERSION"]:
+              raise SystemExit("release manifest version mismatch")
+          if manifest.get("source_sha") != os.environ["SOURCE_SHA"]:
+              raise SystemExit("release manifest source SHA mismatch")
+
+          files = manifest.get("files")
+          if not isinstance(files, list) or len(files) != 6:
+              raise SystemExit("release manifest must contain exactly six files")
+          expected = {}
+          for item in files:
+              filename = item["filename"]
+              path = root / "packages" / filename
+              if not path.is_file():
+                  raise SystemExit(f"missing recovered artifact: {filename}")
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              if digest != item["sha256"] or path.stat().st_size != item["size"]:
+                  raise SystemExit(f"recovered artifact differs: {filename}")
+              expected[filename] = digest
+          actual = {
+              path.name
+              for path in (root / "packages").iterdir()
+              if path.suffix == ".whl" or path.name.endswith(".tar.gz")
+          }
+          if actual != set(expected):
+              raise SystemExit("recovered artifact filenames differ from manifest")
+
+          project = os.environ["PACKAGE_NAME"]
+          version = os.environ["PACKAGE_VERSION"]
+          with urlopen(
+              f"https://test.pypi.org/pypi/{project}/{version}/json", timeout=30
+          ) as response:
+              payload = json.load(response)
+          remote = {
+              item["filename"]: item["digests"]["sha256"]
+              for item in payload["urls"]
+          }
+          if remote != expected:
+              raise SystemExit(
+                  f"TestPyPI differs from recovered manifest: expected={expected}, "
+                  f"remote={remote}"
+              )
+          print("recovered files and TestPyPI match the frozen manifest")
+          PY
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: qualified-release-${{ inputs.source_sha }}
+          path: release
+          if-no-files-found: error
+          retention-days: 14
+
   pypi-preflight:
     name: Check production PyPI retry safety
-    if: inputs.publish_pypi == true
-    needs: smoke-test-testpypi
+    if: >-
+      always() && inputs.publish_pypi == true &&
+      ((inputs.qualified_run_id == '' && needs.smoke-test-testpypi.result == 'success') ||
+       (inputs.qualified_run_id != '' && needs.recover-qualified-release.result == 'success'))
+    needs: [smoke-test-testpypi, recover-qualified-release]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

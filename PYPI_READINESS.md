@@ -17,10 +17,34 @@ Trusted Publishers are required because `tommyslate` is a distinct index
 project. They must bind repository `natomi1203/safe-slate-recommender`, workflow
 `safe-slate-release.yml`, and the protected `testpypi` or `pypi` environment.
 
-Neither index has received a TommySlate artifact yet. A 404 name check is not
-a reservation; both names must be checked again immediately before the first
-OIDC upload. The complete 0.4.0 manifest and source SHA will be recorded here
-after a publication-disabled matrix run succeeds.
+The frozen source is `9594cc0fd96a667cc323a3a8e99b42b04d3100db`. A
+[publication-disabled run](https://github.com/natomi1203/safe-slate-recommender/actions/runs/42222485659)
+first completed all five wheel builds, local installs, smoke tests, sdist build,
+metadata checks, and manifest generation.
+
+The approved
+[TestPyPI qualification run](https://github.com/natomi1203/safe-slate-recommender/actions/runs/42224307122)
+then published version 0.4.0 through OIDC, matched all six remote hashes to its
+manifest, and reinstalled `tommyslate==0.4.0` successfully on Linux x86-64 and
+ARM64, macOS x86-64 and ARM64, and Windows x86-64. The project is available at
+[TestPyPI](https://test.pypi.org/project/tommyslate/0.4.0/).
+
+## TommySlate 0.4.0 TestPyPI manifest
+
+| Artifact | SHA-256 |
+| --- | --- |
+| `tommyslate-0.4.0-cp310-abi3-macosx_11_0_arm64.whl` | `04017dd6015a91bd6aca241983123d366c000d5990a0eb6b5d0db03ed2f27a24` |
+| `tommyslate-0.4.0-cp310-abi3-macosx_11_0_x86_64.whl` | `aacc49de42fa0c80c2d053c22215b68628e9c65e856e5c50b4d9c0816a0a665e` |
+| `tommyslate-0.4.0-cp310-abi3-manylinux_2_28_aarch64.whl` | `e7966677c35c63ba33737c3d0dfac3eaa744eb58976d92d32c4b7d5ce06a66b8` |
+| `tommyslate-0.4.0-cp310-abi3-manylinux_2_28_x86_64.whl` | `974379266174ed985a3ecc2aa535b051ee319c0fa40ec4f424d46ef41a4934a5` |
+| `tommyslate-0.4.0-cp310-abi3-win_amd64.whl` | `dffd79c9f1e0c52a99ccc960d0782b0a25e34640c00fa160e6dca48f85d6b7ac` |
+| `tommyslate-0.4.0.tar.gz` | `c413975ffe09e7df341cac81986944f6285ea2a20ccf5024db372e6349fdcb5d` |
+
+Wheel archives rebuilt in a later run can have different bytes even at the
+same source SHA. Production promotion therefore recovers the artifact bundle
+from qualification run `42224307122`, verifies the run identity, source SHA,
+manifest, local hashes and TestPyPI hashes, and uploads those exact files. It
+does not rebuild the distribution for production.
 
 ## Version 0.3.1 production release
 
