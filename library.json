@@ -1,5 +1,7 @@
 {
   "schema_version": "1.0.0",
+  "display_name": "TommySlate",
+  "tagline": "Every recommendation, checked.",
   "software_id": "safe-slate-recommender",
   "distribution_name": "safe-slate-recommender",
   "package_root": ".",

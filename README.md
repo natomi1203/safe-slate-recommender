@@ -1,19 +1,20 @@
-# safe-slate-recommender
+# TommySlate
 
 [![CI](https://github.com/natomi1203/safe-slate-recommender/actions/workflows/ci.yml/badge.svg)](https://github.com/natomi1203/safe-slate-recommender/actions/workflows/ci.yml)
 [![Python 3.15](https://img.shields.io/badge/Python-3.15-3776AB.svg?logo=python&logoColor=white)](docs/compatibility.md)
 [![Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/safe-slate-recommender.svg)](https://pypi.org/project/safe-slate-recommender/0.3.1/)
 
-**Safer slate re-ranking for Python, with a Rust search core.**
+**Every recommendation, checked.**
 
 Keep the part of a feed, search result, or recommendation slate that already
 works. Explore better replacements only when they satisfy your registered
 safety and business constraints. If evidence is missing, malformed, or fails
 its final check, return the unchanged baseline and record why.
 
-`safe-slate-recommender` is built for teams that need more than a high-scoring
-list: they need a bounded search, an auditable decision, and a safe fallback.
+TommySlate is a safer slate re-ranker for Python, backed by a Rust search core.
+It is built for teams that need more than a high-scoring list: they need a
+bounded search, an auditable decision, and a safe fallback.
 
 > **Release status:** version 0.3.1 is published on production PyPI. The
 > release workflow matched all six artifact hashes and reinstalled the package
@@ -42,8 +43,11 @@ Python 3.15 is required. Add the published package to a uv-managed project:
 uv add "safe-slate-recommender==0.3.1"
 ```
 
-The package has no runtime Python dependencies. For a source build, follow the
-[quickstart](docs/quickstart.md) from a trusted checkout.
+`TommySlate` is the product name. The published distribution remains
+`safe-slate-recommender`, and the stable Python import remains `safe_slate`, so
+existing 0.3.x users do not need to migrate code. The package has no runtime
+Python dependencies. For a source build, follow the [quickstart](docs/quickstart.md)
+from a trusted checkout.
 
 ## One-minute example
 
