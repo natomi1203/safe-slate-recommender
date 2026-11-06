@@ -1,102 +1,100 @@
 # safe-slate-recommender
 
-Rust-backed, Python-callable engine for cardinality-first safe slate
-construction. It implements a certified anytime result, protected-core
-replacement, native group/conflict constraints, a non-monotone Python
-whole-slate predicate hook, diagonal, full-covariance, or factorized-linear LCB
-checks, production serving gates, proposal-dominating logs, post-serving feedback-coverage audits,
-user-blocked OPE readiness gates, cross-fitted DR/IPS/SNIPS estimation,
-partial-support and propensity-interval value bounds, observation-propensity
-adjustment for missing settled outcomes, and finite-cell sample-split
-calibration.
+[![CI](https://github.com/natomi1203/safe-slate-recommender/actions/workflows/ci.yml/badge.svg)](https://github.com/natomi1203/safe-slate-recommender/actions/workflows/ci.yml)
+[![Python 3.15](https://img.shields.io/badge/Python-3.15-3776AB.svg?logo=python&logoColor=white)](docs/compatibility.md)
+[![Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![TestPyPI 0.3.0](https://img.shields.io/badge/TestPyPI-0.3.0-orange.svg)](https://test.pypi.org/project/safe-slate-recommender/0.3.0/)
 
-Start with the [quickstart](docs/quickstart.md). The
-[public API reference](docs/api-reference.md),
-[compatibility policy](docs/compatibility.md), and
-[research integration boundary](docs/research-integration.md) define the
-supported surface and its claim limits. Maintainers should use the
-[release checklist](RELEASE_CHECKLIST.md) and current
-[PyPI readiness assessment](PYPI_READINESS.md); neither authorizes publication.
+**Safer slate re-ranking for Python, with a Rust search core.**
 
-## Research basis and citation
+Keep the part of a feed, search result, or recommendation slate that already
+works. Explore better replacements only when they satisfy your registered
+safety and business constraints. If evidence is missing, malformed, or fails
+its final check, return the unchanged baseline and record why.
 
-This library extracts reusable software contracts from the author's
-[`purchase-aware-retrieval-research`](https://github.com/natomi1203/purchase-aware-retrieval-research)
-repository. The [research integration boundary](docs/research-integration.md)
-separates those repository-authored contracts from third-party theoretical
-background and from research that is not yet eligible for the stable API. The
-same classification is available as
-[machine-readable research lineage](docs/research-lineage.json), pinned to the
-frozen source and publication-registry revisions used for the assessment.
+`safe-slate-recommender` is built for teams that need more than a high-scoring
+list: they need a bounded search, an auditable decision, and a safe fallback.
 
-Use [`CITATION.cff`](CITATION.cff) to cite the software. Citing the software
-does not imply that a manuscript's empirical, theoretical, or production
-claims have been independently validated.
+> **Release status:** version 0.3.0 is available on TestPyPI and has qualified
+> wheels for Linux x86-64/ARM64, macOS x86-64/ARM64, and Windows x86-64. It is
+> not yet published to production PyPI.
 
-## Development
+## Why use it?
 
-```bash
-uv sync
-uv run maturin develop
-uv run pytest
-```
+| Your constraint | What the library provides |
+| --- | --- |
+| Part of the current ranking must never move | Protected-prefix replacement that preserves the registered baseline core |
+| Search may stop before exploring every candidate | A rechecked incumbent with an explicit lower/upper cardinality certificate |
+| Categories, conflicts, or whole-slate rules matter | Native group caps and conflicts, plus deterministic Python predicates |
+| Candidate risks share model uncertainty | Diagonal, full-covariance, and factorized linear uncertainty paths |
+| Missing evidence must never become permission | Fail-closed serving gates and exact baseline fallback |
+| Decisions must be explainable later | Proposal-dominating logs, shadow evaluation, immutable inputs, and no-clobber OPE evidence |
 
-For a release-mode local build:
+The result is deliberately conservative: the library validates the decision
+contract you give it, but it does not invent calibration, causal lift,
+population support, or production authorization.
+
+## Try version 0.3.0
+
+Python 3.15 is required. Until the production PyPI release is separately
+approved, install the qualified TestPyPI build explicitly:
 
 ```bash
-uv run maturin develop --release
+python3.15 -m pip install \
+  --index-url https://test.pypi.org/simple/ \
+  --no-deps \
+  safe-slate-recommender==0.3.0
 ```
 
-## Example
+The package has no runtime Python dependencies. For a source build, follow the
+[quickstart](docs/quickstart.md) from a trusted checkout.
 
-```python
-from safe_slate import finite_cell_lower_bounds, optimize_slate
+## One-minute example
 
-calibration = finite_cell_lower_bounds(
-    {"home": [0.04, 0.08, 0.10, 0.05]},
-    total_alpha=0.05,
-    value_range=(-1.0, 1.0),
-)
-
-def business_rule(selected: list[int]) -> bool:
-    # Arbitrary whole-slate rule. It may be non-monotone.
-    return not ({1, 4} <= set(selected))
-
-result = optimize_slate(
-    rewards=[0.9, 0.8, 0.7, 0.5, 0.4],
-    safety_means=[0.20, 0.15, 0.12, 0.10, 0.08],
-    safety_variances=[0.002, 0.002, 0.001, 0.001, 0.001],
-    max_items=3,
-    group_ids=[0, 0, 1, 1, 2],
-    group_caps={0: 1, 1: 2, 2: 1},
-    conflicts=[(0, 2)],
-    custom_predicate=business_rule,
-    beam_width=128,
-    max_expansions=100_000,
-    timeout_ms=1_000,
-)
-
-print(result.selected_indices, result.k_lower, result.k_upper, result.status)
-```
-
-For balanced remove/add operations with a protected baseline prefix:
+Protect the first two items in an existing slate and choose up to two safe
+replacements for the remaining positions:
 
 ```python
 from safe_slate import optimize_replacements
 
-replacement = optimize_replacements(
-    remove_positions=[560, 560, 561, 562],
-    add_item_ids=[9001, 9002, 9001, 9003],
+result = optimize_replacements(
+    remove_positions=[2, 2, 3, 3],
+    add_item_ids=[100, 101, 100, 102],
     reward_deltas=[0.8, 0.7, 0.6, 0.5],
-    safety_means=[0.20, 0.18, 0.12, 0.10],
-    safety_variances=[0.002, 0.002, 0.001, 0.001],
-    baseline_size=600,
-    protected_count=560,
-    max_replacements=40,
-    baseline_item_ids=list(range(600)),
+    safety_means=[0.04, 0.03, 0.02, 0.01],
+    safety_variances=[0.0001] * 4,
+    baseline_size=4,
+    protected_count=2,
+    max_replacements=2,
+    baseline_item_ids=[10, 11, 12, 13],
 )
 
-print(replacement.materialized_slate)
+assert result.rechecked
+print(result.materialized_slate)  # [10, 11, 100, 102]
+print(result.k_lower, result.k_upper, result.status)  # 2 2 exact
+```
+
+The first two items remain untouched. The optimizer selects a compatible set
+of remove/add operations, maximizes certified replacement count first and
+reward second, and rechecks the final slate before returning it.
+
+## Choose your path
+
+- **Try the core optimizer:** follow the [quickstart](docs/quickstart.md).
+- **Integrate a guarded re-ranker:** start with
+  [`guarded_candidate_pool_rerank`](docs/api-reference.md#guarded_candidate_pool_rerank).
+- **Evaluate before rollout:** use shadow mode, OPE readiness, and immutable
+  evidence workflows described below.
+- **Review the contract:** see the [stable API](docs/api-reference.md),
+  [compatibility policy](docs/compatibility.md), and
+  [safety boundaries](#safety-and-scope).
+
+## Development
+
+```bash
+uv sync --frozen
+uv run maturin develop --release
+uv run pytest
 ```
 
 ## Production guarded re-ranking
@@ -1355,6 +1353,21 @@ The caller must still check the execution service for a matching job identity;
 an empty local destination alone is insufficient. Direct, unbound audit and
 estimator APIs remain available for exploratory work, but should not be used as
 confirmatory evidence.
+
+## Research basis and citation
+
+This library extracts reusable software contracts from the author's
+[`purchase-aware-retrieval-research`](https://github.com/natomi1203/purchase-aware-retrieval-research)
+repository. The [research integration boundary](docs/research-integration.md)
+separates those repository-authored contracts from third-party theoretical
+background and from research that is not yet eligible for the stable API. The
+same classification is available as
+[machine-readable research lineage](docs/research-lineage.json), pinned to the
+frozen source and publication-registry revisions used for the assessment.
+
+Use [`CITATION.cff`](CITATION.cff) to cite the software. Citing the software
+does not imply that a manuscript's empirical, theoretical, or production
+claims have been independently validated.
 
 ## Safety and scope
 
