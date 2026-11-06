@@ -14,13 +14,23 @@ def test_tommyslate_distribution_preserves_python_import_contract() -> None:
     library = json.loads((ROOT / "library.json").read_text(encoding="utf-8"))
 
     assert pyproject["project"]["name"] == "tommyslate"
-    assert pyproject["project"]["version"] == "0.4.0"
+    assert pyproject["project"]["version"] == "0.4.1"
     assert cargo["package"]["name"] == "tommyslate"
-    assert cargo["package"]["version"] == "0.4.0"
+    assert cargo["package"]["version"] == "0.4.1"
     assert library["software_id"] == "tommyslate"
     assert library["distribution_name"] == "tommyslate"
     assert library["import_modules"] == ["safe_slate"]
     assert pyproject["tool"]["maturin"]["module-name"] == "safe_slate._core"
+    assert "Development Status :: 4 - Beta" in pyproject["project"]["classifiers"]
+    assert "Development Status :: 3 - Alpha" not in pyproject["project"][
+        "classifiers"
+    ]
+    assert pyproject["project"]["urls"]["Repository"] == (
+        "https://github.com/natomi1203/tommyslate"
+    )
+    assert cargo["package"]["repository"] == (
+        "https://github.com/natomi1203/tommyslate"
+    )
 
 
 def test_old_and_new_cli_names_resolve_to_the_same_entry_point() -> None:
@@ -39,7 +49,7 @@ def test_release_workflow_targets_only_the_new_distribution() -> None:
     )
 
     assert 'PACKAGE_NAME: "tommyslate"' in workflow
-    assert 'PACKAGE_VERSION: "0.4.0"' in workflow
+    assert 'PACKAGE_VERSION: "0.4.1"' in workflow
     assert "/p/tommyslate/" in workflow
     assert "pypi/safe-slate-recommender" not in workflow
     assert 'f"safe-slate-recommender==' not in workflow

@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+
+- Renamed the GitHub repository to `natomi1203/tommyslate` so the repository
+  and PyPI distribution use the same name.
+- Advanced the PyPI development-status classifier from Alpha to Beta without
+  changing runtime behavior, the `safe_slate` import, or the stable API.
+
 ## 0.4.0
 
 - Adopted TommySlate as the product and PyPI distribution name.

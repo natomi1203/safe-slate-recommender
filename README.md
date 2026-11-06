@@ -1,9 +1,9 @@
 # TommySlate
 
-[![CI](https://github.com/natomi1203/safe-slate-recommender/actions/workflows/ci.yml/badge.svg)](https://github.com/natomi1203/safe-slate-recommender/actions/workflows/ci.yml)
+[![CI](https://github.com/natomi1203/tommyslate/actions/workflows/ci.yml/badge.svg)](https://github.com/natomi1203/tommyslate/actions/workflows/ci.yml)
 [![Python 3.15](https://img.shields.io/badge/Python-3.15-3776AB.svg?logo=python&logoColor=white)](docs/compatibility.md)
 [![Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![PyPI](https://img.shields.io/pypi/v/tommyslate.svg)](https://pypi.org/project/tommyslate/0.4.0/)
+[![PyPI](https://img.shields.io/pypi/v/tommyslate.svg)](https://pypi.org/project/tommyslate/)
 
 **Every recommendation, checked.**
 
@@ -16,9 +16,9 @@ TommySlate is a safer slate re-ranker for Python, backed by a Rust search core.
 It is built for teams that need more than a high-scoring list: they need a
 bounded search, an auditable decision, and a safe fallback.
 
-> **Release status:** TommySlate 0.4.0 is published on production PyPI. The
-> exact TestPyPI-qualified artifacts match production by filename and SHA-256
-> and reinstall successfully on all five supported runners.
+> **Release status:** TommySlate 0.4.1 is the Beta metadata and repository-name
+> alignment candidate. Version 0.4.0 remains the current production release
+> until the 0.4.1 artifact gates complete.
 
 ## Why use it?
 
@@ -40,7 +40,7 @@ population support, or production authorization.
 Python 3.15 is required. Add TommySlate to a uv-managed project:
 
 ```bash
-uv add "tommyslate==0.4.0"
+uv add "tommyslate==0.4.1"
 ```
 
 The stable Python import remains `safe_slate`; application imports do not
@@ -49,7 +49,7 @@ installing both because they provide the same Python module:
 
 ```bash
 uv remove safe-slate-recommender
-uv add "tommyslate==0.4.0"
+uv add "tommyslate==0.4.1"
 ```
 
 The legacy `safe-slate-freeze-inputs` command remains as an alias for the new

@@ -2,6 +2,21 @@
 
 Assessment date: 2026-11-07 (Asia/Tokyo).
 
+## TommySlate 0.4.1 Beta candidate
+
+Version 0.4.1 renames the GitHub repository to
+[`natomi1203/tommyslate`](https://github.com/natomi1203/tommyslate), matching
+the PyPI distribution name, and changes the development-status classifier from
+Alpha to Beta. It does not change runtime behavior, the `safe_slate` import,
+the seven registered stable interfaces, or the release artifact policy.
+
+The new repository identity changes the GitHub OIDC `repository` claim. Before
+0.4.1 can be uploaded, the active TestPyPI and PyPI Trusted Publishers must be
+updated to repository `natomi1203/tommyslate`, workflow
+`safe-slate-release.yml`, and the existing protected `testpypi`/`pypi`
+environments. Version 0.4.0 remains the current production release until those
+gates and the full five-platform qualification complete.
+
 ## TommySlate 0.4.0 production release
 
 Version 0.4.0 changes only the distribution identity and migration-facing
@@ -12,24 +27,26 @@ runtime behavior are unchanged from 0.3.1.
 
 TommySlate 0.4.0 is published on
 [PyPI](https://pypi.org/project/tommyslate/0.4.0/). Publication used protected
-`testpypi` and `pypi` environments and OIDC Trusted Publishing bound to
-repository `natomi1203/safe-slate-recommender` and workflow
-`safe-slate-release.yml`. No long-lived package-index token was created.
+`testpypi` and `pypi` environments and OIDC Trusted Publishing. At release
+time, the publisher was bound to the former repository name
+`natomi1203/safe-slate-recommender` and workflow `safe-slate-release.yml`; the
+repository was subsequently renamed. No long-lived package-index token was
+created.
 
 The frozen source is `9594cc0fd96a667cc323a3a8e99b42b04d3100db`. A
-[publication-disabled run](https://github.com/natomi1203/safe-slate-recommender/actions/runs/42222485659)
+[publication-disabled run](https://github.com/natomi1203/tommyslate/actions/runs/42222485659)
 first completed all five wheel builds, local installs, smoke tests, sdist build,
 metadata checks, and manifest generation.
 
 The approved
-[TestPyPI qualification run](https://github.com/natomi1203/safe-slate-recommender/actions/runs/42224307122)
+[TestPyPI qualification run](https://github.com/natomi1203/tommyslate/actions/runs/42224307122)
 then published version 0.4.0 through OIDC, matched all six remote hashes to its
 manifest, and reinstalled `tommyslate==0.4.0` successfully on Linux x86-64 and
 ARM64, macOS x86-64 and ARM64, and Windows x86-64. The project is available at
 [TestPyPI](https://test.pypi.org/project/tommyslate/0.4.0/).
 
 The approved
-[production promotion run](https://github.com/natomi1203/safe-slate-recommender/actions/runs/42233403791)
+[production promotion run](https://github.com/natomi1203/tommyslate/actions/runs/42233403791)
 recovered that exact TestPyPI-qualified bundle without rebuilding, matched all
 six production filenames and SHA-256 values, and reinstalled
 `tommyslate==0.4.0` successfully on all five target runners.
@@ -55,7 +72,7 @@ and TestPyPI hashes, and uploaded those exact files without rebuilding.
 Version 0.3.1 is published on
 [PyPI](https://pypi.org/project/safe-slate-recommender/0.3.1/) from source
 commit `342a016d644d72da15f9fc2a8d59a70f6ffda3c2`. The approved
-[release workflow](https://github.com/natomi1203/safe-slate-recommender/actions/runs/42215206667)
+[release workflow](https://github.com/natomi1203/tommyslate/actions/runs/42215206667)
 built one source distribution and five wheels, qualified the exact artifacts
 on TestPyPI, then uploaded the same files to production PyPI without rebuilding.
 
