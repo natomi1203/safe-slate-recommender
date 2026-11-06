@@ -127,6 +127,13 @@ def verify_release(
     if not SHA_RE.fullmatch(source_sha):
         raise ArtifactError("source_sha must be a lowercase 40-character commit SHA")
 
+    all_archives = sorted(
+        [*artifact_dir.glob("*.whl"), *artifact_dir.glob("*.tar.gz")]
+    )
+    if len(all_archives) != 6:
+        raise ArtifactError(
+            f"expected exactly six distribution archives, found {len(all_archives)}"
+        )
     wheels = sorted(artifact_dir.glob(f"{DIST_PREFIX}-{version}-*.whl"))
     sdists = sorted(artifact_dir.glob(f"{DIST_PREFIX}-{version}.tar.gz"))
     archives = [*wheels, *sdists]
