@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package safe_slate.v1;
+
+service SafeSlateReranker {
+  rpc ProposeSlate(ProposeSlateRequest) returns (ProposeSlateResponse);
+}
+
+message Candidate {
+  string item_id = 1;
+  uint32 input_rank = 2;
+  repeated double features = 3;
+}
+
+message ProposeSlateRequest {
+  string contract_digest = 1;
+  string model_digest = 2;
+  string request_id = 3;
+  string trace_id = 4;
+  repeated Candidate candidates = 5;
+  uint32 baseline_size = 6;
+  uint32 protected_count = 7;
+  uint32 max_replacements = 8;
+  uint32 deadline_millis = 9;
+}
+
+message ReplacementOperation {
+  uint32 remove_position = 1;
+  string add_item_id = 2;
+}
+
+enum ProposalStatus {
+  PROPOSAL_STATUS_UNSPECIFIED = 0;
+  PROPOSAL_STATUS_OK = 1;
+  PROPOSAL_STATUS_FALLBACK_INVALID_INPUT = 2;
+  PROPOSAL_STATUS_FALLBACK_IDENTITY_MISMATCH = 3;
+  PROPOSAL_STATUS_FALLBACK_NO_SAFE_CHANGE = 4;
+  PROPOSAL_STATUS_FALLBACK_FINAL_RECHECK = 5;
+  PROPOSAL_STATUS_FALLBACK_INTERNAL = 6;
+}
+
+message ProposeSlateResponse {
+  ProposalStatus status = 1;
+  repeated string proposed_slate = 2;
+  repeated ReplacementOperation operations = 3;
+  uint32 k_lower = 4;
+  uint32 k_upper = 5;
+  bool final_recheck_passed = 6;
+  bool fallback = 7;
+  string model_digest = 8;
+  string input_digest = 9;
+  uint64 rust_duration_micros = 10;
+  string stop_reason = 11;
+  bool deadline_reached = 12;
+}

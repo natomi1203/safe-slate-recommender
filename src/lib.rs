@@ -13,6 +13,25 @@ macro_rules! coverage_tests {
     };
 }
 
+#[cfg(any(test, coverage))]
+macro_rules! coverage_async_tests {
+    ($runner:ident; $(async fn $name:ident() $body:block)*) => {
+        $(
+            #[cfg_attr(test, tokio::test)]
+            pub(crate) async fn $name() $body
+        )*
+
+        #[cfg(coverage)]
+        pub(crate) fn $runner() {
+            let runtime = tokio::runtime::Runtime::new()
+                .expect("coverage async runtime must start");
+            runtime.block_on(async {
+                $($name().await;)*
+            });
+        }
+    };
+}
+
 // cargo-llvm-cov defines `cfg(coverage)`. The injected failures exist only in
 // that build and exercise otherwise allocation-only PyO3 error propagation
 // without changing normal library behavior.
@@ -95,6 +114,11 @@ mod coverage_failpoints {
         UncertaintyPreparedVariance,
         UncertaintyProjectedDiagonal,
         UncertaintyProjectedPsd,
+        SidecarOptimize,
+        SidecarProjection,
+        SidecarConstraints,
+        SidecarOracle,
+        SidecarFinalRecheck,
     }
 
     thread_local! {
@@ -123,6 +147,7 @@ mod coverage_failpoints {
 
 mod constraints;
 mod oracle;
+pub mod sidecar;
 mod uncertainty;
 
 use std::collections::{HashMap, HashSet};
@@ -1209,6 +1234,9 @@ fn _run_coverage_suite() {
     constraints::tests::run_coverage_tests();
     oracle::tests::run_validation_coverage_tests();
     oracle::tests::run_search_coverage_tests();
+    sidecar::tests::run_async_coverage_tests();
+    sidecar::tests::run_sync_coverage_tests();
+    sidecar::tests::run_failpoint_coverage_tests();
     uncertainty::tests::run_coverage_tests();
     tests::run_coverage_tests();
     tests::run_failpoint_coverage_tests();

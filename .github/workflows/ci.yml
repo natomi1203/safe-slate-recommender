@@ -41,6 +41,8 @@ jobs:
           cargo +"$RUST_VERSION" test --locked --all-targets
           cargo +"$RUST_VERSION" clippy --locked --all-targets -- -D warnings
           uv run python -c "import safe_slate._core as core; assert not hasattr(core, '_run_coverage_suite')"
+      - name: Verify sidecar container definition
+        run: docker build --check -f Dockerfile.sidecar .
       - name: Verify local distributions
         run: |
           uv run maturin build --release --locked --compatibility pypi -i python3.15 --out dist
