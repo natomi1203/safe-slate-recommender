@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.85"
 description = "Certified anytime slate construction with Python bindings"
 license = "Apache-2.0"
-repository = "https://github.com/natomi1203/purchase-aware-retrieval-research"
+repository = "https://github.com/natomi1203/safe-slate-recommender"
 
 [lib]
 name = "_core"

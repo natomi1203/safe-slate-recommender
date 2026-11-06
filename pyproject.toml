@@ -30,10 +30,10 @@ test = ["mypy>=2.4,<3", "pytest>=8.4,<10"]
 safe-slate-freeze-inputs = "safe_slate.external_intake:main"
 
 [project.urls]
-Repository = "https://github.com/natomi1203/purchase-aware-retrieval-research"
-Documentation = "https://github.com/natomi1203/purchase-aware-retrieval-research/tree/main/safe-slate-recommender/docs"
-Changelog = "https://github.com/natomi1203/purchase-aware-retrieval-research/blob/main/safe-slate-recommender/CHANGELOG.md"
-Issues = "https://github.com/natomi1203/purchase-aware-retrieval-research/issues"
+Repository = "https://github.com/natomi1203/safe-slate-recommender"
+Documentation = "https://github.com/natomi1203/safe-slate-recommender/tree/main/docs"
+Changelog = "https://github.com/natomi1203/safe-slate-recommender/blob/main/CHANGELOG.md"
+Issues = "https://github.com/natomi1203/safe-slate-recommender/issues"
 
 [dependency-groups]
 dev = [

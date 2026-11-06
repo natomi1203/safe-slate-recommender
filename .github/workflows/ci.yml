@@ -1,0 +1,47 @@
+name: Verify library
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.15"
+  RUST_VERSION: "1.99.0"
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install fixed toolchains
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy
+          python -m pip install --disable-pip-version-check uv==0.13.1
+      - name: Install locked dependencies and native extension
+        run: |
+          uv sync --frozen
+          uv run maturin develop --release
+      - name: Verify Python API and types
+        run: |
+          uv run pytest
+          uv run mypy python/safe_slate --check-untyped-defs
+          uv run python -m mypy.stubtest safe_slate._core
+          uv run python -m compileall -q python/safe_slate scripts tests
+      - name: Verify Rust backend
+        run: |
+          cargo +"$RUST_VERSION" test --locked --all-targets
+          cargo +"$RUST_VERSION" clippy --locked --all-targets -- -D warnings
+      - name: Verify local distributions
+        run: |
+          uv run maturin build --release --locked --compatibility pypi -i python3.15 --out dist
+          uv run maturin sdist --out dist
+          uvx --from twine==6.2.0 twine check dist/*
