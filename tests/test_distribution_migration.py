@@ -57,3 +57,6 @@ def test_production_promotion_reuses_testpypi_qualified_artifacts() -> None:
     assert "run-id: ${{ inputs.qualified_run_id }}" in workflow
     assert "inputs.qualified_run_id == ''" in workflow
     assert "needs.recover-qualified-release.result == 'success'" in workflow
+    assert "needs.pypi-preflight.result == 'success'" in workflow
+    assert "needs.publish-pypi.result == 'success'" in workflow
+    assert "needs.verify-pypi.result == 'success'" in workflow
