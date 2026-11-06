@@ -43,3 +43,59 @@ def test_custom_allocation_may_leave_budget_unused() -> None:
 
     assert result.total_alpha == pytest.approx(0.1)
     assert result.allocated_alpha == pytest.approx(0.05)
+
+
+@pytest.mark.parametrize(
+    ("contrasts", "total_alpha", "value_range", "alpha_by_cell", "message"),
+    [
+        ({}, 0.1, (0.0, 1.0), None, "at least one"),
+        ({"home": [0.2]}, 0.0, (0.0, 1.0), None, "total_alpha"),
+        ({"home": [0.2]}, math.nan, (0.0, 1.0), None, "total_alpha"),
+        (
+            {"home": [0.2]},
+            0.1,
+            (0.0, 1.0),
+            {"search": 0.05},
+            "exactly the registered cells",
+        ),
+        (
+            {"home": [0.2]},
+            0.1,
+            (0.0, 1.0),
+            {"home": math.inf},
+            "every cell alpha",
+        ),
+        (
+            {"home": [0.2]},
+            0.1,
+            (0.0, 1.0),
+            {"home": 0.2},
+            "exceed total_alpha",
+        ),
+        ({"home": [math.nan]}, 0.1, (0.0, 1.0), None, "NaN or infinity"),
+        (
+            {"home": [0.2]},
+            0.1,
+            {"search": (0.0, 1.0)},
+            None,
+            "value_range is missing",
+        ),
+        ({"home": [0.2]}, 0.1, (0.0,), None, "two-value range"),
+        ({"home": [0.2]}, 0.1, (1.0, 0.0), None, "invalid value range"),
+        ({"home": [0.2]}, 0.1, (0.0, math.inf), None, "invalid value range"),
+    ],
+)
+def test_calibration_rejects_every_malformed_contract(
+    contrasts,
+    total_alpha: float,
+    value_range,
+    alpha_by_cell,
+    message: str,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        finite_cell_lower_bounds(
+            contrasts,
+            total_alpha=total_alpha,
+            value_range=value_range,
+            alpha_by_cell=alpha_by_cell,
+        )

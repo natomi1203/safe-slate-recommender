@@ -364,7 +364,11 @@ def _write_bundle(
         os.replace(temporary, target)
         return manifest
     except BaseException:
-        if temporary.exists() and temporary.parent == target.parent:
+        # Every fallible operation before atomic replace leaves this exact
+        # temporary directory in place; successful replace returns normally.
+        if (  # pragma: no branch - atomic publication invariant
+            temporary.exists() and temporary.parent == target.parent
+        ):
             shutil.rmtree(temporary)
         raise
 

@@ -11,6 +11,7 @@ from safe_slate import (
     guarded_rerank,
     summarize_shadow_run,
 )
+from safe_slate.shadow import _service_trace_valid
 
 
 def _shadow_log(
@@ -315,3 +316,85 @@ def test_shadow_summary_serializes_count_maps() -> None:
     assert serialized["invalid_reason_counts"] == {}
     assert serialized["operability_pass"] is True
     assert serialized["causal_lift_claim_authorized"] is False
+
+
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+def test_nonfinite_context_values_remain_digestible_but_invalid(value: float) -> None:
+    log = replace(_shadow_log("r0"), context={"value": value})
+    summary = _summarize([log], minimum_requests=1, maximum_invalid_output_rate=1.0)
+    assert "proposal_log_not_canonical_json" in dict(summary.invalid_reason_counts)
+    assert len(summary.log_data_digest) == 64
+
+
+@pytest.mark.parametrize(
+    ("changes", "reason"),
+    [
+        ({"schema_version": "1.2"}, "unsupported_schema"),
+        ({"event_timestamp": "not-a-time"}, "event_timestamp_missing_or_invalid"),
+        ({"proposal_log_complete": False}, "proposal_log_incomplete"),
+        ({"protected_count": True}, "protected_count_invalid"),
+        ({"selected_operation_indices": (True,)}, "selected_operation_indices_invalid"),
+        ({"k_lower": 1}, "selected_count_k_lower_mismatch"),
+        ({"k_upper": 1}, "cardinality_frontier_inconsistent"),
+        ({"cardinality_gap": 1}, "cardinality_frontier_inconsistent"),
+        ({"selected_flags": (True,)}, "selected_flag_length_mismatch"),
+        ({"selected_flags": (False, False)}, "selected_flags_inconsistent"),
+        ({"proposed_slate": (10,)}, "proposed_slate_length_mismatch"),
+        ({"proposed_slate": (99, 11, 100, 101)}, "protected_core_changed"),
+        ({"proposed_slate": (10, 11, 100, 100)}, "proposed_slate_contains_duplicates"),
+        ({"elapsed_seconds": math.nan}, "oracle_latency_invalid"),
+        ({"selected_safety_lcb": math.nan}, "certificate_value_invalid"),
+    ],
+)
+def test_shadow_summary_records_every_invalid_proposal_contract(
+    changes: dict[str, object], reason: str
+) -> None:
+    log = replace(_shadow_log("r0"), **changes)
+    summary = _summarize([log], minimum_requests=1, maximum_invalid_output_rate=1.0)
+    assert reason in dict(summary.invalid_reason_counts)
+
+
+def test_shadow_service_trace_validation_rejects_noncanonical_variants() -> None:
+    log = _shadow_log("r0", with_service_latency=True)
+    invalid_trace = replace(log.service_latency_trace, response_latency_ms=-1.0)
+    invalid = replace(log, service_latency_trace=invalid_trace)
+    incomplete = replace(
+        log,
+        service_latency_trace=create_service_latency_trace(
+            response_latency_ms=20.0, log_commit_latency_ms=25.0
+        ),
+    )
+    for candidate in (invalid, incomplete):
+        summary = _summarize(
+            [candidate],
+            minimum_requests=1,
+            maximum_invalid_output_rate=1.0,
+            require_service_latency_trace=True,
+            maximum_service_response_p95_ms=30.0,
+            maximum_log_commit_p95_ms=30.0,
+        )
+        assert "service_latency_trace_invalid" in dict(summary.invalid_reason_counts)
+
+    non_trace = replace(log, service_latency_trace=object())
+    assert not _service_trace_valid(non_trace, require_complete=True)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"require_service_latency_trace": 1}, "must be boolean"),
+        (
+            {
+                "require_service_latency_trace": True,
+                "maximum_service_response_p95_ms": -1.0,
+                "maximum_log_commit_p95_ms": 30.0,
+            },
+            "finite and positive",
+        ),
+    ],
+)
+def test_shadow_summary_rejects_remaining_invalid_thresholds(
+    overrides: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _summarize([_shadow_log("r0")], **overrides)

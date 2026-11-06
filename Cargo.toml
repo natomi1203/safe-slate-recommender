@@ -15,6 +15,9 @@ crate-type = ["cdylib", "rlib"]
 pyo3 = { version = "0.30.1", features = ["abi3-py310"] }
 sha2 = "0.10.9"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

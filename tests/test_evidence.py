@@ -257,6 +257,28 @@ def _rewrite_artifact_and_markers(
     completion_path.write_bytes(_canonical(completion))
 
 
+def _rewrite_manifest_and_marker(target: Path, manifest: dict[str, object]) -> None:
+    manifest_bytes = _canonical(manifest)
+    (target / "manifest.json").write_bytes(manifest_bytes)
+    completion_path = target / "complete.json"
+    completion = json.loads(completion_path.read_bytes())
+    completion["manifest_byte_size"] = len(manifest_bytes)
+    completion["manifest_sha256"] = sha256(manifest_bytes).hexdigest()
+    completion_path.write_bytes(_canonical(completion))
+
+
+def _rewrite_raw_artifact_and_markers(
+    target: Path, filename: str, data: bytes
+) -> None:
+    (target / filename).write_bytes(data)
+    manifest = json.loads((target / "manifest.json").read_bytes())
+    for artifact in manifest["artifacts"]:
+        if artifact["filename"] == filename:
+            artifact["byte_size"] = len(data)
+            artifact["sha256"] = sha256(data).hexdigest()
+    _rewrite_manifest_and_marker(target, manifest)
+
+
 def test_no_clobber_bundle_round_trip_and_completion_marker(tmp_path: Path) -> None:
     target = tmp_path / "evidence-v1"
     (
@@ -302,12 +324,25 @@ def test_existing_output_is_never_overwritten(tmp_path: Path) -> None:
         ("serving_changes", True, "safety flags"),
         ("credentials_or_personal_records_emitted", True, "safety flags"),
         ("actual_runtime_seconds", 61.0, "runtime"),
+        ("actual_runtime_seconds", -0.1, "runtime"),
+        ("actual_runtime_seconds", True, "runtime"),
         ("peak_memory_mb", 513, "memory"),
+        ("peak_memory_mb", -1, "memory"),
+        ("peak_memory_mb", True, "memory"),
         ("created_at", "2026-10-01T00:00:00+09:00", "earliest"),
+        ("created_at", "not-a-time", "ISO-8601"),
+        ("created_at", "2026-10-02T00:00:00", "timezone"),
+        ("successful_execution_ids", [], "at least one"),
+        ("successful_execution_ids", [""], "non-empty strings"),
         (
             "successful_execution_ids",
             ["duplicate", "duplicate"],
             "unique",
+        ),
+        (
+            "failed_execution_ids",
+            ["local-evaluation-001"],
+            "may not overlap",
         ),
     ],
 )
@@ -318,6 +353,82 @@ def test_writer_rejects_contract_and_safety_violations(
     with pytest.raises(ValueError, match=message):
         _write(target, **{field: value})
     assert not target.exists()
+
+
+def test_writer_rejects_empty_timestamp_and_manifest_overhead_cap(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="non-empty ISO-8601"):
+        _write(tmp_path / "empty-time", created_at="")
+
+    components = _components(maximum_output_bytes=9_500)
+    with pytest.raises(ValueError, match="byte cap"):
+        _write(
+            tmp_path / "manifest-overhead",
+            input_manifest=components[0],
+            input_verification=components[1],
+            contract=components[2],
+            readiness=components[3],
+            estimate=components[4],
+            evidence_status=components[5],
+        )
+
+
+def test_writer_rejects_invalid_component_bindings(tmp_path: Path) -> None:
+    input_manifest, input_verification, contract, readiness, estimate, status = (
+        _components()
+    )
+
+    class EstimateWithoutSerialization:
+        evaluation_contract_digest = contract.contract_digest
+        row_data_digest = readiness.row_data_digest
+
+    cases = [
+        ({"contract": "bad"}, "contract is invalid"),
+        ({"input_manifest": "bad"}, "input manifest is invalid"),
+        ({"input_verification": "bad"}, "input_verification"),
+        ({"readiness": "bad"}, "readiness"),
+        ({"evidence_status": "bad"}, "evidence_status"),
+        (
+            {
+                "readiness": replace(
+                    readiness, evaluation_contract_digest="0" * 64
+                )
+            },
+            "readiness contract digest",
+        ),
+        (
+            {"estimate": replace(estimate, row_data_digest="0" * 64)},
+            "estimate row digest",
+        ),
+        (
+            {"evidence_status": replace(status, contract_digest="0" * 64)},
+            "evidence status contract digest",
+        ),
+        ({"estimate": EstimateWithoutSerialization()}, "expose to_dict"),
+        (
+            {"estimate": None},
+            "requires a completed estimate",
+        ),
+        (
+            {
+                "evidence_status": replace(
+                    status,
+                    overall_state="insufficient_evidence",
+                    decision_eligible=False,
+                    authorized_actions=(),
+                )
+            },
+            "may not contain an estimate",
+        ),
+    ]
+    for index, (overrides, message) in enumerate(cases):
+        target = tmp_path / f"invalid-component-{index}"
+        with pytest.raises(ValueError, match=message):
+            _write(target, **overrides)
+        assert not target.exists()
+
+    missing_parent = tmp_path / "missing" / "bundle"
+    with pytest.raises(ValueError, match="parent directory"):
+        _write(missing_parent)
 
 
 def test_writer_rejects_digest_mismatches_before_writing(tmp_path: Path) -> None:
@@ -565,3 +676,426 @@ def test_noneligible_bundle_preserves_empty_authorized_actions(tmp_path: Path) -
     assert verification.valid
     assert verification.evidence_state == "artifact_complete"
     assert verification.authorized_actions == ()
+    assert verification.to_dict()["valid"] is True
+
+
+def test_writer_rejects_population_and_temporal_binding_mismatches(
+    tmp_path: Path,
+) -> None:
+    manifest = _input_manifest()
+    verification = _input_verification(manifest)
+    _, _, population_contract, readiness, estimate, status = _components(
+        population_identity="different-population",
+        input_manifest_digest=manifest.manifest_digest,
+    )
+    with pytest.raises(ValueError, match="population"):
+        write_evidence_bundle(
+            tmp_path / "population",
+            output_identity=population_contract.output_namespace,
+            contract=population_contract,
+            input_manifest=manifest,
+            input_verification=verification,
+            readiness=readiness,
+            estimate=estimate,
+            evidence_status=status,
+            created_at="2026-10-02T00:00:01+09:00",
+            successful_execution_ids=["run"],
+            actual_runtime_seconds=1.0,
+            peak_memory_mb=1,
+            no_matching_execution_verified=True,
+        )
+
+    components = _components(final_window_end="2026-09-03T00:00:00+09:00")
+    with pytest.raises(ValueError, match="feature cutoff"):
+        _write(
+            tmp_path / "feature-cutoff",
+            input_manifest=components[0],
+            input_verification=components[1],
+            contract=components[2],
+            readiness=components[3],
+            estimate=components[4],
+            evidence_status=components[5],
+        )
+
+    components = _components(earliest_analysis_time="2026-10-01T00:00:00+09:00")
+    with pytest.raises(ValueError, match="label cutoff"):
+        _write(
+            tmp_path / "label-cutoff",
+            input_manifest=components[0],
+            input_verification=components[1],
+            contract=components[2],
+            readiness=components[3],
+            estimate=components[4],
+            evidence_status=components[5],
+        )
+
+
+def test_writer_rejects_late_manifest_specific_path_and_nonfinite_payload(
+    tmp_path: Path,
+) -> None:
+    late_manifest = create_input_manifest(
+        manifest_id="late-manifest",
+        population_identity="eligible-population-v1",
+        created_at="2026-10-03T00:00:00+09:00",
+        feature_cutoff="2026-09-02T00:00:00+09:00",
+        label_cutoff="2026-10-02T00:00:00+09:00",
+        required_roles=REQUIRED_INPUT_ROLES,
+        inputs=_input_manifest().inputs,
+    )
+    late_verification = _input_verification(late_manifest)
+    components = _components(input_manifest_digest=late_manifest.manifest_digest)
+    with pytest.raises(ValueError, match="created after"):
+        _write(
+            tmp_path / "late-manifest",
+            input_manifest=late_manifest,
+            input_verification=late_verification,
+            contract=components[2],
+            readiness=components[3],
+            estimate=components[4],
+            evidence_status=components[5],
+        )
+
+    with pytest.raises(ValueError, match="specific directory"):
+        _write(Path("."))
+
+    _, _, _, readiness, _, _ = _components()
+    with pytest.raises(ValueError, match="non-finite"):
+        _write(tmp_path / "nonfinite", readiness=replace(readiness, support_rate=float("nan")))
+
+
+def test_verifier_rejects_marker_manifest_and_artifact_integrity_variants(
+    tmp_path: Path,
+) -> None:
+    assert not verify_evidence_bundle(tmp_path / "missing").valid
+
+    target = tmp_path / "marker-state"
+    _write(target)
+    completion = json.loads((target / "complete.json").read_bytes())
+    completion["state"] = "partial"
+    (target / "complete.json").write_bytes(_canonical(completion))
+    assert "completion marker is not complete" in verify_evidence_bundle(target).reasons
+
+    target = tmp_path / "manifest-digest"
+    _write(target)
+    (target / "manifest.json").write_bytes((target / "manifest.json").read_bytes() + b" ")
+    assert "manifest digest mismatch" in verify_evidence_bundle(target).reasons
+
+    target = tmp_path / "manifest-size"
+    _write(target)
+    completion = json.loads((target / "complete.json").read_bytes())
+    completion["manifest_byte_size"] += 1
+    (target / "complete.json").write_bytes(_canonical(completion))
+    assert "manifest size mismatch" in verify_evidence_bundle(target).reasons
+
+    target = tmp_path / "manifest-schema"
+    _write(target)
+    manifest = json.loads((target / "manifest.json").read_bytes())
+    manifest["schema_version"] = "2.0"
+    _rewrite_manifest_and_marker(target, manifest)
+    assert "unsupported manifest schema" in verify_evidence_bundle(target).reasons
+
+    target = tmp_path / "artifact-count"
+    _write(target)
+    completion = json.loads((target / "complete.json").read_bytes())
+    completion["artifact_count"] += 1
+    (target / "complete.json").write_bytes(_canonical(completion))
+    assert "artifact count mismatch" in verify_evidence_bundle(target).reasons
+
+    for field, value, message in [
+        ("filename", "manifest.json", "artifact filename"),
+        ("role", "unknown", "artifact role"),
+        ("sha256", "0" * 64, "artifact digest mismatch"),
+    ]:
+        target = tmp_path / f"artifact-{field}"
+        _write(target)
+        manifest = json.loads((target / "manifest.json").read_bytes())
+        manifest["artifacts"][0][field] = value
+        _rewrite_manifest_and_marker(target, manifest)
+        assert any(message in reason for reason in verify_evidence_bundle(target).reasons)
+
+
+def test_verifier_rejects_nonfinite_and_oversized_rehashed_payloads(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "nonfinite"
+    _write(target)
+    readiness = json.loads((target / "readiness.json").read_bytes())
+    readiness["support_rate"] = float("nan")
+    data = (json.dumps(readiness, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    _rewrite_raw_artifact_and_markers(target, "readiness.json", data)
+    assert any(
+        "non-finite numeric evidence" in reason
+        for reason in verify_evidence_bundle(target).reasons
+    )
+
+    target = tmp_path / "oversized"
+    _write(target)
+    readiness_data = (target / "readiness.json").read_bytes() + b" " * 1_000_000
+    _rewrite_raw_artifact_and_markers(target, "readiness.json", readiness_data)
+    assert "bundle exceeds output byte cap" in verify_evidence_bundle(target).reasons
+
+
+def test_bundle_without_estimate_round_trips_analysis_ready_state(tmp_path: Path) -> None:
+    input_manifest, input_verification, contract, readiness, _, _ = _components()
+    status = classify_evaluation_evidence(
+        contract,
+        analysis_timestamp="2026-10-02T00:00:00+09:00",
+        collection_complete=True,
+        immutable_inputs_verified=True,
+        no_clobber_verified=True,
+        labels_settled=True,
+        label_snapshot_digest="c" * 64,
+        readiness_decision=readiness.decision,
+        readiness_contract_digest=readiness.evaluation_contract_digest,
+        estimation_complete=False,
+        final_audit_passed=None,
+    )
+    target = tmp_path / "analysis-ready"
+    write_evidence_bundle(
+        target,
+        output_identity=contract.output_namespace,
+        contract=contract,
+        input_manifest=input_manifest,
+        input_verification=input_verification,
+        readiness=readiness,
+        estimate=None,
+        evidence_status=status,
+        created_at="2026-10-02T00:00:01+09:00",
+        successful_execution_ids=["run"],
+        actual_runtime_seconds=1.0,
+        peak_memory_mb=1,
+        no_matching_execution_verified=True,
+    )
+    verification = verify_evidence_bundle(target)
+    assert verification.valid
+    assert verification.evidence_state == "analysis_ready"
+
+    status_payload = json.loads((target / "evidence_status.json").read_bytes())
+    status_payload["overall_state"] = "decision_eligible"
+    _rewrite_artifact_and_markers(target, "evidence_status.json", status_payload)
+    manifest_payload = json.loads((target / "manifest.json").read_bytes())
+    manifest_payload["evidence_state"] = "decision_eligible"
+    _rewrite_manifest_and_marker(target, manifest_payload)
+    assert any(
+        "requires a persisted estimate" in reason
+        for reason in verify_evidence_bundle(target).reasons
+    )
+
+
+def test_verifier_rejects_rehashed_cross_artifact_binding_changes(
+    tmp_path: Path,
+) -> None:
+    manifest_cases = [
+        ("contract_digest", "0" * 64, "manifest contract digest mismatch"),
+        ("input_manifest_digest", "0" * 64, "bundle input manifest digest mismatch"),
+        ("output_identity", "wrong", "output identity mismatch"),
+        ("row_data_digest", "0" * 64, "manifest row digest mismatch"),
+        ("evidence_state", "wrong", "evidence state mismatch"),
+        ("estimate_type", None, "estimate presence disagrees"),
+        ("estimate_type", "", "estimate type is empty"),
+        ("created_at", "2026-10-01T00:00:00+09:00", "predates"),
+        ("actual_runtime_seconds", True, "runtime cap exceeded"),
+        ("peak_memory_mb", -1, "memory cap exceeded"),
+        ("safety_flags", [], "offline safety flags"),
+        ("successful_execution_ids", [], "execution identities"),
+    ]
+    for index, (field, value, message) in enumerate(manifest_cases):
+        target = tmp_path / f"manifest-binding-{index}"
+        _write(target)
+        manifest = json.loads((target / "manifest.json").read_bytes())
+        manifest[field] = value
+        _rewrite_manifest_and_marker(target, manifest)
+        assert any(message in reason for reason in verify_evidence_bundle(target).reasons)
+
+    artifact_cases = [
+        ("readiness.json", "evaluation_contract_digest", "0" * 64, "readiness contract digest"),
+        ("estimate.json", "evaluation_contract_digest", "0" * 64, "estimate contract digest"),
+        ("evidence_status.json", "contract_digest", "0" * 64, "status contract digest"),
+        ("estimate.json", "row_data_digest", "0" * 64, "estimate row digest"),
+        ("readiness.json", "minimum_raw_requests", 999, "readiness settings differ"),
+        ("estimate.json", "outcome_lower_bound", -1.0, "outcome bounds differ"),
+        ("evidence_status.json", "explicitly_unauthorized", [], "unauthorized action boundary"),
+        ("evidence_status.json", "authorized_actions", [], "authorized action boundary"),
+    ]
+    for index, (filename, field, value, message) in enumerate(artifact_cases):
+        target = tmp_path / f"artifact-binding-{index}"
+        _write(target)
+        payload = json.loads((target / filename).read_bytes())
+        payload[field] = value
+        _rewrite_artifact_and_markers(target, filename, payload)
+        assert any(message in reason for reason in verify_evidence_bundle(target).reasons)
+
+    target = tmp_path / "different-valid-input-manifest"
+    _write(target)
+    other = _input_manifest(manifest_id="other-manifest")
+    _rewrite_artifact_and_markers(target, "input_manifest.json", other.to_dict())
+    assert "input manifest digest does not match the contract" in verify_evidence_bundle(target).reasons
+
+
+def test_verifier_rejects_rehashed_state_machine_contradictions(tmp_path: Path) -> None:
+    def rewrite_status_and_state(
+        target: Path, changes: dict[str, object], state: str | None = None
+    ) -> None:
+        status = json.loads((target / "evidence_status.json").read_bytes())
+        status.update(changes)
+        _rewrite_artifact_and_markers(target, "evidence_status.json", status)
+        if state is not None:
+            manifest = json.loads((target / "manifest.json").read_bytes())
+            manifest["evidence_state"] = state
+            _rewrite_manifest_and_marker(target, manifest)
+
+    cases = [
+        (
+            {"overall_state": "unknown"},
+            "unknown",
+            "outside contract vocabulary",
+        ),
+        (
+            {
+                "overall_state": "decision_eligible",
+                "collection_complete": False,
+            },
+            "decision_eligible",
+            "internally inconsistent",
+        ),
+        (
+            {
+                "overall_state": "artifact_complete",
+                "decision_eligible": True,
+                "authorized_actions": ["offline_research_reporting"],
+            },
+            "artifact_complete",
+            "boolean contradicts state",
+        ),
+        (
+            {
+                "overall_state": "analysis_ready",
+                "decision_eligible": False,
+                "authorized_actions": [],
+            },
+            "analysis_ready",
+            "failed readiness was promoted",
+        ),
+        (
+            {
+                "overall_state": "artifact_complete",
+                "decision_eligible": False,
+                "authorized_actions": [],
+                "statistically_sufficient": False,
+            },
+            "artifact_complete",
+            "readiness sufficiency contradicts",
+        ),
+    ]
+    for index, (changes, state, message) in enumerate(cases):
+        target = tmp_path / f"state-{index}"
+        _write(target)
+        if message == "failed readiness was promoted":
+            readiness = json.loads((target / "readiness.json").read_bytes())
+            readiness["decision"] = "fail"
+            _rewrite_artifact_and_markers(target, "readiness.json", readiness)
+        rewrite_status_and_state(target, changes, state)
+        assert any(message in reason for reason in verify_evidence_bundle(target).reasons)
+
+    target = tmp_path / "insufficient-with-estimate"
+    _write(target)
+    rewrite_status_and_state(
+        target,
+        {"overall_state": "insufficient_evidence", "decision_eligible": False, "authorized_actions": []},
+        "insufficient_evidence",
+    )
+    assert "insufficient evidence may not contain an estimate" in verify_evidence_bundle(target).reasons
+
+
+def _replace_bundle_components(
+    target: Path,
+    input_manifest,
+    input_verification,
+    contract,
+    readiness,
+    estimate,
+    status,
+) -> None:
+    for filename, value in (
+        ("contract.json", contract),
+        ("input_manifest.json", input_manifest),
+        ("input_verification.json", input_verification),
+        ("readiness.json", readiness),
+        ("estimate.json", estimate),
+        ("evidence_status.json", status),
+    ):
+        _rewrite_artifact_and_markers(target, filename, value.to_dict())
+    manifest = json.loads((target / "manifest.json").read_bytes())
+    manifest.update(
+        contract_digest=contract.contract_digest,
+        input_manifest_digest=input_manifest.manifest_digest,
+        row_data_digest=readiness.row_data_digest,
+        evidence_state=status.overall_state,
+        estimate_type=type(estimate).__name__,
+        output_identity=contract.output_namespace,
+    )
+    _rewrite_manifest_and_marker(target, manifest)
+
+
+def test_verifier_rejects_coherently_rehashed_population_and_time_changes(
+    tmp_path: Path,
+) -> None:
+    population_manifest = _input_manifest()
+    population_verification = _input_verification(population_manifest)
+    population_components = _components(
+        population_identity="different-population",
+        input_manifest_digest=population_manifest.manifest_digest,
+    )
+    target = tmp_path / "population-mismatch"
+    _write(target)
+    _replace_bundle_components(
+        target,
+        population_manifest,
+        population_verification,
+        *population_components[2:],
+    )
+    assert any(
+        "input manifest population does not match" in reason
+        for reason in verify_evidence_bundle(target).reasons
+    )
+
+    feature_components = _components(final_window_end="2026-09-03T00:00:00+09:00")
+    target = tmp_path / "feature-mismatch"
+    _write(target)
+    _replace_bundle_components(target, *feature_components)
+    assert any(
+        "feature cutoff must equal" in reason
+        for reason in verify_evidence_bundle(target).reasons
+    )
+
+    label_components = _components(earliest_analysis_time="2026-10-01T00:00:00+09:00")
+    target = tmp_path / "label-mismatch"
+    _write(target)
+    _replace_bundle_components(target, *label_components)
+    assert any(
+        "label cutoff is outside" in reason
+        for reason in verify_evidence_bundle(target).reasons
+    )
+
+    late_manifest = create_input_manifest(
+        manifest_id="late-verifier-manifest",
+        population_identity="eligible-population-v1",
+        created_at="2026-10-03T00:00:00+09:00",
+        feature_cutoff="2026-09-02T00:00:00+09:00",
+        label_cutoff="2026-10-02T00:00:00+09:00",
+        required_roles=REQUIRED_INPUT_ROLES,
+        inputs=_input_manifest().inputs,
+    )
+    late_components = _components(input_manifest_digest=late_manifest.manifest_digest)
+    target = tmp_path / "late-manifest-verifier"
+    _write(target)
+    _replace_bundle_components(
+        target,
+        late_manifest,
+        _input_verification(late_manifest),
+        *late_components[2:],
+    )
+    assert any(
+        "postdates the evidence bundle" in reason
+        for reason in verify_evidence_bundle(target).reasons
+    )

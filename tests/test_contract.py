@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from hashlib import sha256
 import json
 
@@ -15,6 +15,7 @@ from safe_slate import (
     load_ope_evaluation_contract,
 )
 from safe_slate.ope import _audit_ope_readiness_with_contract
+from safe_slate.estimation import _validate_evaluation_contract_binding
 
 
 def _contract(**overrides: object):
@@ -297,6 +298,51 @@ def test_contract_bound_readiness_cannot_be_estimated_without_matching_contract(
         )
 
 
+def test_estimation_contract_binding_rejects_tampering_and_bound_drift() -> None:
+    contract = _contract(bootstrap_repetitions=10)
+    readiness = _audit_ope_readiness_with_contract(
+        contract,
+        analysis_timestamp="2026-10-08T00:00:00+09:00",
+        _population_positivity_verified=True,
+        **_row_evidence(),
+    )
+    common = {
+        "bootstrap_repetitions": contract.bootstrap_repetitions,
+        "bootstrap_seed": contract.bootstrap_seed,
+        "confidence_level": contract.confidence_level,
+    }
+
+    with pytest.raises(ValueError, match="tampered"):
+        _validate_evaluation_contract_binding(
+            replace(contract, contract_digest="0" * 64),
+            readiness,
+            **common,
+        )
+    with pytest.raises(ValueError, match="settings differ"):
+        _validate_evaluation_contract_binding(
+            contract,
+            readiness,
+            **common,
+            outcome_lower_bound=contract.outcome_lower_bound,
+        )
+    with pytest.raises(ValueError, match="settings differ"):
+        _validate_evaluation_contract_binding(
+            contract,
+            readiness,
+            **common,
+            outcome_lower_bound=-1.0,
+            outcome_upper_bound=contract.outcome_upper_bound,
+        )
+
+    _validate_evaluation_contract_binding(
+        contract,
+        readiness,
+        **common,
+        outcome_lower_bound=contract.outcome_lower_bound,
+        outcome_upper_bound=contract.outcome_upper_bound,
+    )
+
+
 def _evidence_status(**overrides: object):
     contract = overrides.pop("contract", _contract())
     values: dict[str, object] = {
@@ -307,7 +353,7 @@ def _evidence_status(**overrides: object):
         "labels_settled": True,
         "label_snapshot_digest": "c" * 64,
         "readiness_decision": "pass",
-        "readiness_contract_digest": contract.contract_digest,
+        "readiness_contract_digest": getattr(contract, "contract_digest", None),
         "estimation_complete": True,
         "final_audit_passed": True,
     }
@@ -391,3 +437,50 @@ def test_decision_eligible_authorizes_only_contract_scope() -> None:
     assert status.decision_eligible
     assert status.authorized_actions == ("offline_research_reporting",)
     assert "production_rollout" in status.explicitly_unauthorized
+    assert status.to_dict()["overall_state"] == "decision_eligible"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"pilot_window_start": ""}, "non-empty ISO-8601"),
+        ({"pilot_window_start": "not-a-time"}, "ISO-8601"),
+        ({"evaluation_id": ""}, "non-empty string"),
+        ({"maximum_missing_outcome_rate": True}, "finite and in"),
+        ({"maximum_missing_outcome_rate": 1.1}, "finite and in"),
+        ({"minimum_purchase_events": True}, "nonnegative integer"),
+        ({"propensity_mode": "missing"}, "known or interval"),
+        ({"authorized_scope": ()}, "non-empty and unique"),
+    ],
+)
+def test_contract_rejects_remaining_malformed_values(
+    overrides: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _contract(**overrides)
+
+
+def test_contract_loader_rejects_type_and_schema_drift() -> None:
+    with pytest.raises(ValueError, match="must be a mapping"):
+        load_ope_evaluation_contract([])  # type: ignore[arg-type]
+    payload = _contract().to_dict()
+    payload.pop("evaluation_id")
+    with pytest.raises(ValueError, match="fields mismatch"):
+        load_ope_evaluation_contract(payload)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"contract": "bad"}, "untampered"),
+        ({"collection_complete": 1}, "must be boolean"),
+        ({"final_audit_passed": "yes"}, "boolean or None"),
+        ({"readiness_decision": "unknown"}, "pass, partial, fail"),
+    ],
+)
+def test_evidence_classifier_rejects_invalid_public_contract(
+    overrides: dict[str, object], message: str
+) -> None:
+    contract = overrides.pop("contract", _contract())
+    with pytest.raises(ValueError, match=message):
+        _evidence_status(contract=contract, **overrides)

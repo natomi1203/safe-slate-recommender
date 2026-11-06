@@ -91,3 +91,44 @@ def test_gate_assessment_controls_rerank_and_is_logged() -> None:
     assert result.proposal_log.gate_evidence is not None
     assert result.proposal_log.gate_evidence["support_rate"] == pytest.approx(0.70)
     assert result.proposal_log.gate_evidence["reasons"] == ["support_below_threshold"]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "reason"),
+    [
+        ({"support_rate": None}, "support_missing"),
+        ({"distribution_shift_score": -0.1}, "shift_score_invalid"),
+        ({"distribution_shift_score": 0.2}, "distribution_shift"),
+        ({"uncertainty_evidence_valid": False}, "uncertainty_invalid"),
+        ({"expected_proposal_count": True}, "proposal_count_invalid"),
+        ({"logged_proposal_count": -1}, "proposal_count_invalid"),
+    ],
+)
+def test_each_runtime_gate_failure_is_recorded(
+    overrides: dict[str, object], reason: str
+) -> None:
+    values = {
+        "support_rate": 1.0,
+        "distribution_shift_score": 0.0,
+        "uncertainty_evidence_valid": True,
+        "expected_proposal_count": 1,
+        "logged_proposal_count": 1,
+    }
+    values.update(overrides)
+    assessment = assess_serving_gates(**values)  # type: ignore[arg-type]
+    assert reason in assessment.reasons
+    assert not assessment.passed
+    assert assessment.to_dict()["passed"] is False
+
+
+@pytest.mark.parametrize("value", [-0.1, math.inf])
+def test_invalid_shift_threshold_is_rejected(value: float) -> None:
+    with pytest.raises(ValueError, match="maximum_distribution_shift_score"):
+        assess_serving_gates(
+            support_rate=1.0,
+            distribution_shift_score=0.0,
+            uncertainty_evidence_valid=True,
+            expected_proposal_count=1,
+            logged_proposal_count=1,
+            maximum_distribution_shift_score=value,
+        )

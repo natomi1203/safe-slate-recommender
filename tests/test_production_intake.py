@@ -57,6 +57,9 @@ def test_go_production_envelope_round_trips_without_broadening_claim() -> None:
     assert "pure_response_serialization" in MISSING_FULL_SERVICE_STAGES
     assert "proposal_broker_publish" in MISSING_FULL_SERVICE_STAGES
     assert "durable_proposal_log_commit" in MISSING_FULL_SERVICE_STAGES
+    assert coverage.to_dict()["missing_full_service_stages"] == list(
+        MISSING_FULL_SERVICE_STAGES
+    )
 
 
 def test_published_go_envelope_schema_matches_strict_loader_fields() -> None:
@@ -154,3 +157,59 @@ def test_jsonl_loader_rejects_duplicate_keys_and_empty_is_insufficient(tmp_path)
     empty = audit_observed_grpc_envelopes([])
     assert empty.evidence_state == "insufficient_evidence"
     assert not empty.process_local_server_envelope_complete
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("request_id", "", "non-empty string"),
+        ("payload_length_bytes", True, "nonnegative integer"),
+        ("rpc_begin_at", "2026-11-03T03:00:00.010Z", "trailing fractional zero"),
+        ("rpc_begin_at", "2026-02-30T03:00:00Z", "not a valid UTC"),
+        ("full_method_name", "wrong", "method is invalid"),
+    ],
+)
+def test_production_envelope_rejects_remaining_field_contracts(
+    field: str, value: object, message: str
+) -> None:
+    payload = _payload()
+    payload[field] = value
+    with pytest.raises(ValueError, match=message):
+        load_observed_grpc_envelope(payload)
+
+
+def test_production_envelope_rejects_non_mapping_payload() -> None:
+    with pytest.raises(ValueError, match="must be a mapping"):
+        load_observed_grpc_envelope([])  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("contents", "message"),
+    [
+        ("\n", "blank JSONL"),
+        ('{"value":NaN}\n', "invalid production"),
+        ("{bad}\n", "invalid production"),
+    ],
+)
+def test_production_jsonl_rejects_blank_nonfinite_and_invalid_rows(
+    tmp_path, contents: str, message: str
+) -> None:
+    path = tmp_path / "invalid.jsonl"
+    path.write_text(contents)
+    with pytest.raises(ValueError, match=message):
+        load_observed_grpc_envelopes_jsonl(
+            path, maximum_records=1, maximum_bytes=1_000
+        )
+
+
+def test_production_jsonl_rejects_nonpositive_caps_and_invalid_audit_records(
+    tmp_path,
+) -> None:
+    path = tmp_path / "empty.jsonl"
+    path.write_text("")
+    with pytest.raises(ValueError, match="must be positive"):
+        load_observed_grpc_envelopes_jsonl(
+            path, maximum_records=0, maximum_bytes=1
+        )
+    with pytest.raises(ValueError, match="ObservedGRPCEnvelope"):
+        audit_observed_grpc_envelopes(["bad"])  # type: ignore[list-item]

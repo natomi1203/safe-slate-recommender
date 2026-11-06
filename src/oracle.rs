@@ -276,6 +276,29 @@ fn beam_search(
     incumbent: &mut State,
     stats: &mut SearchStats,
 ) {
+    beam_search_with_clock(
+        inputs,
+        config,
+        constraints,
+        predicate,
+        deadline,
+        incumbent,
+        stats,
+        &mut Instant::now,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn beam_search_with_clock(
+    inputs: &SlateInputs,
+    config: &OracleConfig,
+    constraints: &NativeConstraints,
+    predicate: &mut dyn WholeSlatePredicate,
+    deadline: Instant,
+    incumbent: &mut State,
+    stats: &mut SearchStats,
+    now: &mut dyn FnMut() -> Instant,
+) {
     let item_count = inputs.rewards.len();
     let max_depth = config
         .max_items
@@ -296,7 +319,7 @@ fn beam_search(
                     interrupted = true;
                     break;
                 }
-                if Instant::now() >= deadline {
+                if now() >= deadline {
                     stats.complete = false;
                     stats.deadline_reached = true;
                     stats.stop_reason = "deadline".to_owned();
@@ -324,7 +347,7 @@ fn beam_search(
         }
         if !safe_candidates.is_empty() {
             for candidates in safe_candidates.chunks(PREDICATE_BATCH_CHUNK) {
-                if Instant::now() >= deadline {
+                if now() >= deadline {
                     stats.complete = false;
                     stats.deadline_reached = true;
                     stats.stop_reason = "deadline".to_owned();
@@ -603,13 +626,38 @@ fn validate_covariance(covariance: &[Vec<f64>], variances: &[f64]) -> Result<(),
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(any(test, coverage))]
+pub(crate) mod tests {
     use super::*;
-    use crate::constraints::AcceptAll;
+    use crate::constraints::{AcceptAll, WholeSlatePredicate};
     use std::collections::HashMap;
 
-    #[test]
+    fn valid_inputs() -> SlateInputs {
+        SlateInputs {
+            rewards: vec![3.0, 2.0, 1.0],
+            safety_means: vec![1.0; 3],
+            safety_variances: vec![0.0; 3],
+            covariance: None,
+            linear_features: None,
+            linear_transformed_features: None,
+        }
+    }
+
+    fn valid_config() -> OracleConfig {
+        OracleConfig {
+            max_items: 2,
+            structural_upper_bound: 3,
+            structural_upper_source: "test_bound".to_owned(),
+            beam_width: 16,
+            max_expansions: 1_000,
+            timeout: Duration::from_secs(1),
+            confidence_radius: 1.96,
+            safety_threshold: 0.0,
+        }
+    }
+
+    coverage_tests! {
+    run_validation_coverage_tests;
     fn exact_search_is_cardinality_first() {
         let inputs = SlateInputs {
             rewards: vec![100.0, -1_000.0, 2.0],
@@ -636,11 +684,281 @@ mod tests {
         assert_eq!(result.selected_indices, vec![0, 2]);
         assert_eq!(result.k_lower, 2);
         assert_eq!(result.k_upper, 2);
+
+        let tie_inputs = SlateInputs {
+            rewards: vec![1.0, 1.0],
+            safety_means: vec![1.0, 1.0],
+            safety_variances: vec![0.0, 0.0],
+            covariance: None,
+            linear_features: None,
+            linear_transformed_features: None,
+        };
+        let tie_constraints = NativeConstraints::new(2, None, HashMap::new(), vec![]).unwrap();
+        let mut tie_config = valid_config();
+        tie_config.max_items = 1;
+        tie_config.structural_upper_bound = 2;
+        let tied = optimize(&tie_inputs, &tie_config, &tie_constraints, &mut AcceptAll).unwrap();
+        assert_eq!(tied.selected_indices, vec![0]);
     }
 
-    #[test]
     fn covariance_validation_rejects_indefinite_matrix() {
         let covariance = vec![vec![1.0, 2.0], vec![2.0, 1.0]];
         assert!(validate_covariance(&covariance, &[1.0, 1.0]).is_err());
+
+        let zero_pivot_cross_term = vec![vec![0.0, 1.0], vec![1.0, 1.0]];
+        assert!(validate_covariance(&zero_pivot_cross_term, &[0.0, 1.0]).is_err());
+    }
+
+    fn input_validation_rejects_every_uncertainty_contract_violation() {
+        let base = valid_inputs();
+        let config = valid_config();
+
+        let mut inputs = base.clone();
+        inputs.safety_means.pop();
+        assert!(validate_inputs(&inputs, &config).is_err());
+
+        for malformed in [
+            OracleConfig {
+                beam_width: 0,
+                ..config.clone()
+            },
+            OracleConfig {
+                max_expansions: 0,
+                ..config.clone()
+            },
+            OracleConfig {
+                structural_upper_bound: 4,
+                ..config.clone()
+            },
+            OracleConfig {
+                confidence_radius: -1.0,
+                ..config.clone()
+            },
+            OracleConfig {
+                safety_threshold: 0.1,
+                ..config.clone()
+            },
+        ] {
+            assert!(validate_inputs(&base, &malformed).is_err());
+        }
+
+        for field in 0..3 {
+            let mut inputs = base.clone();
+            match field {
+                0 => inputs.rewards[0] = f64::NAN,
+                1 => inputs.safety_means[0] = f64::INFINITY,
+                _ => inputs.safety_variances[0] = f64::NEG_INFINITY,
+            }
+            assert!(validate_inputs(&inputs, &config).is_err());
+        }
+
+        let mut inputs = base.clone();
+        inputs.safety_variances[0] = -1.0;
+        assert!(validate_inputs(&inputs, &config).is_err());
+
+        for covariance in [
+            vec![vec![0.0]],
+            vec![vec![f64::NAN, 0.0, 0.0]; 3],
+            vec![vec![-1.0, 0.0, 0.0], vec![0.0; 3], vec![0.0; 3]],
+            vec![vec![1.0, 0.0, 0.0], vec![0.0; 3], vec![0.0; 3]],
+            vec![vec![0.0, 1.0, 0.0], vec![0.0; 3], vec![0.0; 3]],
+            vec![vec![0.0, 1.0, 0.0], vec![1.0, 1.0, 0.0], vec![0.0; 3]],
+        ] {
+            let mut inputs = base.clone();
+            inputs.covariance = Some(covariance);
+            assert!(validate_inputs(&inputs, &config).is_err());
+        }
+
+        let linear_cases = [
+            (Some(vec![vec![1.0]; 3]), None),
+            (Some(vec![vec![1.0]; 2]), Some(vec![vec![0.0]; 2])),
+            (
+                Some(vec![vec![1.0], vec![1.0, 2.0], vec![1.0]]),
+                Some(vec![vec![0.0]; 3]),
+            ),
+            (Some(vec![vec![f64::NAN]; 3]), Some(vec![vec![0.0]; 3])),
+            (Some(vec![vec![1.0]; 3]), Some(vec![vec![1.0]; 3])),
+        ];
+        for (features, transformed) in linear_cases {
+            let mut inputs = base.clone();
+            inputs.linear_features = features;
+            inputs.linear_transformed_features = transformed;
+            assert!(validate_inputs(&inputs, &config).is_err());
+        }
+
+        let mut inputs = base;
+        inputs.covariance = Some(vec![vec![0.0; 3]; 3]);
+        inputs.linear_features = Some(vec![vec![1.0]; 3]);
+        inputs.linear_transformed_features = Some(vec![vec![0.0]; 3]);
+        assert!(validate_inputs(&inputs, &config).is_err());
+    }
+    }
+
+    struct FailOnSecondCall {
+        calls: usize,
+    }
+
+    impl WholeSlatePredicate for FailOnSecondCall {
+        fn accepts(&mut self, _selected: &[usize]) -> Result<bool, String> {
+            self.calls += 1;
+            if self.calls == 1 {
+                Ok(true)
+            } else {
+                Err("predicate unavailable".to_owned())
+            }
+        }
+    }
+
+    struct WrongBatchLength;
+
+    impl WholeSlatePredicate for WrongBatchLength {
+        fn accepts(&mut self, _selected: &[usize]) -> Result<bool, String> {
+            Ok(false)
+        }
+
+        fn accepts_many(&mut self, _candidates: &[Vec<usize>]) -> Vec<Result<bool, String>> {
+            Vec::new()
+        }
+    }
+
+    struct RejectFinalRecheck {
+        calls: usize,
+    }
+
+    impl WholeSlatePredicate for RejectFinalRecheck {
+        fn accepts(&mut self, _selected: &[usize]) -> Result<bool, String> {
+            self.calls += 1;
+            if self.calls == 1 { Ok(true) } else { Ok(false) }
+        }
+
+        fn accepts_many(&mut self, candidates: &[Vec<usize>]) -> Vec<Result<bool, String>> {
+            vec![Ok(true); candidates.len()]
+        }
+    }
+
+    coverage_tests! {
+    run_search_coverage_tests;
+    fn greedy_preserves_a_better_incumbent() {
+        let inputs = valid_inputs();
+        let constraints = NativeConstraints::new(3, None, HashMap::new(), vec![]).unwrap();
+        let mut config = valid_config();
+        config.max_items = 1;
+        let mut incumbent = evaluate(&inputs, &config, vec![0, 1]);
+        let incumbent_before = incumbent.clone();
+        let mut stats = SearchStats::default();
+        greedy_floor(
+            &inputs,
+            &config,
+            &constraints,
+            &mut AcceptAll,
+            Instant::now() + Duration::from_secs(1),
+            &mut incumbent,
+            &mut stats,
+        );
+        assert_eq!(incumbent.selected, incumbent_before.selected);
+        assert_eq!(incumbent.reward, incumbent_before.reward);
+        assert_eq!(stats.incumbent_updates, 0);
+    }
+
+    fn deadlines_budgets_and_predicate_failures_remain_fail_closed() {
+        let inputs = valid_inputs();
+        let constraints = NativeConstraints::new(3, None, HashMap::new(), vec![]).unwrap();
+
+        let mut deadline_config = valid_config();
+        deadline_config.timeout = Duration::ZERO;
+        let deadline = optimize(&inputs, &deadline_config, &constraints, &mut AcceptAll).unwrap();
+        assert!(deadline.deadline_reached);
+        assert_eq!(deadline.stop_reason, "deadline");
+
+        let mut budget_config = valid_config();
+        budget_config.max_expansions = 1;
+        let mut final_failure = FailOnSecondCall { calls: 0 };
+        assert_eq!(final_failure.accepts_many(&[vec![]]), vec![Ok(true)]);
+        final_failure.calls = 0;
+        let fallback = optimize(&inputs, &budget_config, &constraints, &mut final_failure).unwrap();
+        assert_eq!(fallback.status, "baseline");
+        assert!(fallback.rechecked);
+        assert!(fallback.predicate_errors > 0);
+
+        let mut wrong_batch = WrongBatchLength;
+        let predicate_error =
+            optimize(&inputs, &valid_config(), &constraints, &mut wrong_batch).unwrap();
+        assert!(predicate_error.predicate_errors > 0);
+        assert!(!predicate_error.exact);
+
+        let mut truncated_config = valid_config();
+        truncated_config.beam_width = 1;
+        let truncated = optimize(&inputs, &truncated_config, &constraints, &mut AcceptAll).unwrap();
+        assert!(!truncated.exact);
+        assert_eq!(truncated.stop_reason, "beam_truncated");
+
+        let mut final_recheck_config = valid_config();
+        final_recheck_config.max_items = 1;
+        let mut final_failure = RejectFinalRecheck { calls: 0 };
+        let final_recheck = optimize(
+            &inputs,
+            &final_recheck_config,
+            &constraints,
+            &mut final_failure,
+        )
+        .unwrap();
+        assert_eq!(final_recheck.stop_reason, "final_recheck_failed");
+
+        let started = Instant::now();
+        let deadline = started + Duration::from_secs(1);
+        let mut incumbent = State::baseline();
+        let mut stats = SearchStats {
+            complete: true,
+            stop_reason: "search_exhausted".to_owned(),
+            ..SearchStats::default()
+        };
+        let mut expired = || deadline;
+        beam_search_with_clock(
+            &inputs,
+            &valid_config(),
+            &constraints,
+            &mut AcceptAll,
+            deadline,
+            &mut incumbent,
+            &mut stats,
+            &mut expired,
+        );
+        assert_eq!(stats.stop_reason, "deadline");
+
+        let one_item_inputs = SlateInputs {
+            rewards: vec![1.0],
+            safety_means: vec![1.0],
+            safety_variances: vec![0.0],
+            covariance: None,
+            linear_features: None,
+            linear_transformed_features: None,
+        };
+        let one_item_constraints = NativeConstraints::new(1, None, HashMap::new(), vec![]).unwrap();
+        let mut one_item_config = valid_config();
+        one_item_config.max_items = 1;
+        one_item_config.structural_upper_bound = 1;
+        let mut clock_calls = 0;
+        let mut expire_before_batch = || {
+            clock_calls += 1;
+            if clock_calls == 1 { started } else { deadline }
+        };
+        let mut incumbent = State::baseline();
+        let mut stats = SearchStats {
+            complete: true,
+            stop_reason: "search_exhausted".to_owned(),
+            ..SearchStats::default()
+        };
+        beam_search_with_clock(
+            &one_item_inputs,
+            &one_item_config,
+            &one_item_constraints,
+            &mut AcceptAll,
+            deadline,
+            &mut incumbent,
+            &mut stats,
+            &mut expire_before_batch,
+        );
+        assert_eq!(stats.stop_reason, "deadline");
+    }
     }
 }

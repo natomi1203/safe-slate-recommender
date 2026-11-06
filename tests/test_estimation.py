@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import math
+from types import SimpleNamespace
 
 import pytest
 
@@ -11,7 +13,7 @@ from safe_slate import (
     estimate_partial_identification_bounds,
     estimate_propensity_interval_bounds,
 )
-from safe_slate.ope import _audit_ope_readiness
+from safe_slate.ope import _audit_ope_readiness, _row_data_digest
 
 
 def _row_data(**overrides: object) -> dict[str, object]:
@@ -255,6 +257,44 @@ def _joint_estimate(readiness, row_data: dict[str, object], **overrides: object)
         readiness,
         **values,  # type: ignore[arg-type]
     )
+
+
+def _rebind_rows(readiness, row_data: dict[str, object], **overrides: object):
+    """Bind a readiness fixture to deliberately malformed estimator rows."""
+
+    propensity_mode = readiness.propensity_mode
+    digest = _row_data_digest(
+        request_ids=row_data["request_ids"],  # type: ignore[arg-type]
+        user_ids=row_data["user_ids"],  # type: ignore[arg-type]
+        guaranteed_target_support_mass=row_data[  # type: ignore[arg-type]
+            "guaranteed_target_support_mass"
+        ],
+        target_probability_of_logged_action=row_data[  # type: ignore[arg-type]
+            "target_probability_of_logged_action"
+        ],
+        purchase_events=row_data["purchase_events"],  # type: ignore[arg-type]
+        fold_ids=row_data["fold_ids"],  # type: ignore[arg-type]
+        propensity_mode=propensity_mode,
+        logging_propensities=(
+            row_data.get("logging_propensities")  # type: ignore[arg-type]
+            if propensity_mode == "known"
+            else None
+        ),
+        logging_propensity_lower=(
+            row_data.get("logging_propensity_lower")  # type: ignore[arg-type]
+            if propensity_mode == "interval"
+            else None
+        ),
+        logging_propensity_upper=(
+            row_data.get("logging_propensity_upper")  # type: ignore[arg-type]
+            if propensity_mode == "interval"
+            else None
+        ),
+        outcome_observation_propensities=row_data.get(  # type: ignore[arg-type]
+            "outcome_observation_propensities"
+        ),
+    )
+    return replace(readiness, row_data_digest=digest, **overrides)
 
 
 def test_cross_fitted_dr_is_primary_and_ips_snips_are_diagnostics() -> None:
@@ -893,3 +933,370 @@ def test_joint_bounds_serialize_all_claim_boundaries() -> None:
     assert serialized["conditional_partial_identification"] is True
     assert serialized["conditional_missingness_independence_attested"] is True
     assert serialized["production_rollout_authorized"] is False
+
+
+def test_point_estimator_rejects_remaining_structural_failures() -> None:
+    rows = _row_data()
+    readiness = _readiness(rows)
+
+    with pytest.raises(ValueError, match="OpeReadinessAssessment"):
+        _estimate(None, rows)
+    with pytest.raises(ValueError, match="row count"):
+        _estimate(replace(readiness, raw_requests=5), rows)
+
+    missing = _row_data(purchase_events=[1, None, 1, 0])
+    with pytest.raises(ValueError, match="complete outcomes"):
+        _estimate(_rebind_rows(readiness, missing), missing)
+
+    invalid_event = _row_data(purchase_events=[1, -1, 1, 0])
+    with pytest.raises(ValueError, match="nonnegative integers"):
+        _estimate(_rebind_rows(readiness, invalid_event), invalid_event)
+
+    crossing_folds = _row_data(fold_ids=[0, 1, 1, 1])
+    with pytest.raises(ValueError, match="user block"):
+        _estimate(_rebind_rows(readiness, crossing_folds), crossing_folds)
+
+    one_fold = _row_data(fold_ids=[0, 0, 0, 0])
+    with pytest.raises(ValueError, match="at least two folds"):
+        _estimate(_rebind_rows(readiness, one_fold), one_fold)
+
+    zero_weight = _row_data(target_probability_of_logged_action=[0.0] * 4)
+    with pytest.raises(ValueError, match="SNIPS denominator"):
+        _estimate(_rebind_rows(readiness, zero_weight), zero_weight)
+
+    with pytest.raises(ValueError, match="point-support diagnostics"):
+        _estimate(replace(readiness, support_rate=None), rows)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("bootstrap_repetitions", 0),
+        ("bootstrap_seed", -1),
+        ("confidence_level", math.nan),
+    ],
+)
+def test_partial_estimator_rejects_remaining_inference_failures(
+    field: str, value: object
+) -> None:
+    rows = _partial_rows()
+    readiness = _readiness(rows)
+    with pytest.raises(ValueError):
+        _partial_estimate(readiness, rows, **{field: value})
+
+
+def test_partial_estimator_rejects_remaining_structural_failures() -> None:
+    rows = _partial_rows()
+    readiness = _readiness(rows)
+
+    with pytest.raises(ValueError, match="OpeReadinessAssessment"):
+        _partial_estimate(None, rows)
+    with pytest.raises(ValueError, match="arrays are inconsistent"):
+        _partial_estimate(readiness, rows, user_ids=["u0"])
+    with pytest.raises(ValueError, match="empty input"):
+        _partial_estimate(
+            readiness,
+            rows,
+            request_ids=[],
+            user_ids=[],
+            guaranteed_target_support_mass=[],
+            target_probability_of_logged_action=[],
+            logging_propensities=[],
+            purchase_events=[],
+            fold_ids=[],
+            outcome_prediction_logged_action=[],
+            outcome_prediction_supported_target_contribution=[],
+        )
+    with pytest.raises(ValueError, match="row count"):
+        _partial_estimate(replace(readiness, raw_requests=5), rows)
+
+    missing = _partial_rows(purchase_events=[1, None, 1, 0])
+    with pytest.raises(ValueError, match="complete outcomes"):
+        _partial_estimate(_rebind_rows(readiness, missing), missing)
+
+    with pytest.raises(ValueError, match="contributions must be finite"):
+        _partial_estimate(
+            readiness,
+            rows,
+            outcome_prediction_supported_target_contribution=[math.nan] * 4,
+        )
+
+    crossing_folds = _partial_rows(fold_ids=[0, 1, 1, 1])
+    with pytest.raises(ValueError, match="user block"):
+        _partial_estimate(_rebind_rows(readiness, crossing_folds), crossing_folds)
+    one_fold = _partial_rows(fold_ids=[0, 0, 0, 0])
+    with pytest.raises(ValueError, match="at least two folds"):
+        _partial_estimate(_rebind_rows(readiness, one_fold), one_fold)
+    with pytest.raises(ValueError, match="support diagnostics"):
+        _partial_estimate(replace(readiness, support_rate=None), rows)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("bootstrap_repetitions", 0),
+        ("bootstrap_seed", -1),
+        ("confidence_level", math.nan),
+        ("outcome_lower_bound", math.nan),
+    ],
+)
+def test_interval_estimator_rejects_remaining_inference_failures(
+    field: str, value: object
+) -> None:
+    rows = _interval_rows()
+    readiness = _interval_readiness(rows)
+    with pytest.raises(ValueError):
+        _interval_estimate(readiness, rows, **{field: value})
+
+
+def test_interval_estimator_rejects_remaining_structural_failures() -> None:
+    rows = _interval_rows()
+    readiness = _interval_readiness(rows)
+
+    with pytest.raises(ValueError, match="OpeReadinessAssessment"):
+        _interval_estimate(None, rows)
+    with pytest.raises(ValueError, match="complete outcomes"):
+        _interval_estimate(
+            replace(readiness, missing_outcome_rate=0.25),
+            rows,
+        )
+    with pytest.raises(ValueError, match="arrays are inconsistent"):
+        _interval_estimate(readiness, rows, user_ids=["u0"])
+    with pytest.raises(ValueError, match="empty input"):
+        _interval_estimate(
+            readiness,
+            rows,
+            request_ids=[],
+            user_ids=[],
+            guaranteed_target_support_mass=[],
+            target_probability_of_logged_action=[],
+            logging_propensity_lower=[],
+            logging_propensity_upper=[],
+            purchase_events=[],
+            fold_ids=[],
+            outcome_prediction_logged_action=[],
+            outcome_prediction_supported_target_contribution=[],
+        )
+    with pytest.raises(ValueError, match="row count"):
+        _interval_estimate(replace(readiness, raw_requests=5), rows)
+
+    missing = _interval_rows(purchase_events=[1, None, 1, 0])
+    with pytest.raises(ValueError, match="complete outcomes"):
+        _interval_estimate(_rebind_rows(readiness, missing), missing)
+    invalid_event = _interval_rows(purchase_events=[1, -1, 1, 0])
+    with pytest.raises(ValueError, match="purchase events"):
+        _interval_estimate(_rebind_rows(readiness, invalid_event), invalid_event)
+    with pytest.raises(ValueError, match="logged-action predictions"):
+        _interval_estimate(
+            readiness,
+            rows,
+            outcome_prediction_logged_action=[math.nan] * 4,
+        )
+    with pytest.raises(ValueError, match="contributions must be finite"):
+        _interval_estimate(
+            readiness,
+            rows,
+            outcome_prediction_supported_target_contribution=[math.nan] * 4,
+        )
+    with pytest.raises(ValueError, match="support-scaled"):
+        _interval_estimate(
+            readiness,
+            rows,
+            outcome_prediction_supported_target_contribution=[2.0] * 4,
+        )
+
+    crossing_folds = _interval_rows(fold_ids=[0, 1, 1, 1])
+    with pytest.raises(ValueError, match="user block"):
+        _interval_estimate(_rebind_rows(readiness, crossing_folds), crossing_folds)
+    one_fold = _interval_rows(fold_ids=[0, 0, 0, 0])
+    with pytest.raises(ValueError, match="at least two folds"):
+        _interval_estimate(_rebind_rows(readiness, one_fold), one_fold)
+
+    invalid_interval = _interval_rows(logging_propensity_lower=[0.0] * 4)
+    with pytest.raises(ValueError, match="positive and ordered"):
+        _interval_estimate(
+            _rebind_rows(readiness, invalid_interval),
+            invalid_interval,
+        )
+    with pytest.raises(ValueError, match="support diagnostics"):
+        _interval_estimate(replace(readiness, support_rate=None), rows)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("bootstrap_repetitions", 0),
+        ("bootstrap_seed", -1),
+        ("confidence_level", math.nan),
+    ],
+)
+def test_missingness_estimator_rejects_remaining_inference_failures(
+    field: str, value: object
+) -> None:
+    rows = _missing_rows()
+    readiness = _missing_readiness(rows)
+    with pytest.raises(ValueError):
+        _missing_estimate(readiness, rows, **{field: value})
+
+
+def test_missingness_estimator_rejects_remaining_structural_failures() -> None:
+    rows = _missing_rows()
+    readiness = _missing_readiness(rows)
+
+    with pytest.raises(ValueError, match="OpeReadinessAssessment"):
+        _missing_estimate(None, rows)
+    with pytest.raises(ValueError, match="arrays are inconsistent"):
+        _missing_estimate(readiness, rows, user_ids=["u0"])
+    with pytest.raises(ValueError, match="empty input"):
+        _missing_estimate(
+            readiness,
+            rows,
+            request_ids=[],
+            user_ids=[],
+            guaranteed_target_support_mass=[],
+            target_probability_of_logged_action=[],
+            logging_propensities=[],
+            outcome_observation_propensities=[],
+            purchase_events=[],
+            fold_ids=[],
+            outcome_prediction_logged_action=[],
+            outcome_prediction_target_policy=[],
+        )
+    with pytest.raises(ValueError, match="row count"):
+        _missing_estimate(replace(readiness, raw_requests=5), rows)
+
+    invalid_event = _missing_rows(purchase_events=[1, -1, None, 0])
+    with pytest.raises(ValueError, match="nonnegative integers"):
+        _missing_estimate(_rebind_rows(readiness, invalid_event), invalid_event)
+    all_missing = _missing_rows(purchase_events=[None] * 4)
+    with pytest.raises(ValueError, match="both observed and missing"):
+        _missing_estimate(_rebind_rows(readiness, all_missing), all_missing)
+    all_observed = _missing_rows(purchase_events=[1, 0, 1, 0])
+    with pytest.raises(ValueError, match="both observed and missing"):
+        _missing_estimate(_rebind_rows(readiness, all_observed), all_observed)
+    bad_observation = _missing_rows(outcome_observation_propensities=[0.0] * 4)
+    with pytest.raises(ValueError, match="observation propensities"):
+        _missing_estimate(_rebind_rows(readiness, bad_observation), bad_observation)
+    with pytest.raises(ValueError, match="outcome predictions"):
+        _missing_estimate(
+            readiness,
+            rows,
+            outcome_prediction_target_policy=[math.nan] * 4,
+        )
+
+    crossing_folds = _missing_rows(fold_ids=[0, 1, 1, 1])
+    with pytest.raises(ValueError, match="user block"):
+        _missing_estimate(_rebind_rows(readiness, crossing_folds), crossing_folds)
+    one_fold = _missing_rows(fold_ids=[0, 0, 0, 0])
+    with pytest.raises(ValueError, match="at least two folds"):
+        _missing_estimate(_rebind_rows(readiness, one_fold), one_fold)
+    zero_weight = _missing_rows(target_probability_of_logged_action=[0.0] * 4)
+    with pytest.raises(ValueError, match="SNIPS denominator"):
+        _missing_estimate(_rebind_rows(readiness, zero_weight), zero_weight)
+    with pytest.raises(ValueError, match="missingness diagnostics"):
+        _missing_estimate(replace(readiness, support_rate=None), rows)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("bootstrap_repetitions", 0),
+        ("bootstrap_seed", -1),
+        ("confidence_level", math.nan),
+        ("outcome_lower_bound", math.nan),
+    ],
+)
+def test_joint_estimator_rejects_remaining_inference_failures(
+    field: str, value: object
+) -> None:
+    rows = _joint_known_rows()
+    readiness = _joint_readiness(rows)
+    with pytest.raises(ValueError):
+        _joint_estimate(readiness, rows, **{field: value})
+
+
+def test_joint_estimator_rejects_remaining_structural_failures() -> None:
+    rows = _joint_known_rows()
+    readiness = _joint_readiness(rows)
+
+    with pytest.raises(ValueError, match="OpeReadinessAssessment"):
+        _joint_estimate(SimpleNamespace(propensity_mode="known"), rows)
+    with pytest.raises(ValueError, match="arrays are inconsistent"):
+        _joint_estimate(readiness, rows, user_ids=["u0"])
+    with pytest.raises(ValueError, match="empty input"):
+        _joint_estimate(
+            readiness,
+            rows,
+            request_ids=[],
+            user_ids=[],
+            guaranteed_target_support_mass=[],
+            target_probability_of_logged_action=[],
+            logging_propensities=[],
+            outcome_observation_propensities=[],
+            purchase_events=[],
+            fold_ids=[],
+            outcome_prediction_logged_action=[],
+            outcome_prediction_supported_target_contribution=[],
+        )
+    with pytest.raises(ValueError, match="row count"):
+        _joint_estimate(replace(readiness, raw_requests=5), rows)
+    with pytest.raises(ValueError, match="known mode"):
+        _joint_estimate(readiness, rows, logging_propensities=None)
+
+    interval_rows = _joint_interval_rows()
+    interval_readiness = _joint_readiness(interval_rows)
+    with pytest.raises(ValueError, match="interval mode"):
+        _joint_estimate(
+            interval_readiness,
+            interval_rows,
+            logging_propensities=[0.5] * 4,
+        )
+
+    invalid_event = _joint_known_rows(purchase_events=[1, -1, None, 0])
+    with pytest.raises(ValueError, match="purchase events"):
+        _joint_estimate(_rebind_rows(readiness, invalid_event), invalid_event)
+    all_missing = _joint_known_rows(purchase_events=[None] * 4)
+    with pytest.raises(ValueError, match="both observed and missing"):
+        _joint_estimate(_rebind_rows(readiness, all_missing), all_missing)
+    all_observed = _joint_known_rows(purchase_events=[1, 0, 1, 0])
+    with pytest.raises(ValueError, match="both observed and missing"):
+        _joint_estimate(_rebind_rows(readiness, all_observed), all_observed)
+    bad_observation = _joint_known_rows(outcome_observation_propensities=[0.0] * 4)
+    with pytest.raises(ValueError, match="observation propensities"):
+        _joint_estimate(_rebind_rows(readiness, bad_observation), bad_observation)
+    with pytest.raises(ValueError, match="logged-action predictions"):
+        _joint_estimate(
+            readiness,
+            rows,
+            outcome_prediction_logged_action=[math.nan] * 4,
+        )
+    with pytest.raises(ValueError, match="contributions must be finite"):
+        _joint_estimate(
+            readiness,
+            rows,
+            outcome_prediction_supported_target_contribution=[math.nan] * 4,
+        )
+    with pytest.raises(ValueError, match="support-scaled"):
+        _joint_estimate(
+            readiness,
+            rows,
+            outcome_prediction_supported_target_contribution=[2.0] * 4,
+        )
+
+    crossing_folds = _joint_known_rows(fold_ids=[0, 1, 1, 1])
+    with pytest.raises(ValueError, match="user block"):
+        _joint_estimate(_rebind_rows(readiness, crossing_folds), crossing_folds)
+    one_fold = _joint_known_rows(fold_ids=[0, 0, 0, 0])
+    with pytest.raises(ValueError, match="at least two folds"):
+        _joint_estimate(_rebind_rows(readiness, one_fold), one_fold)
+    bad_known = _joint_known_rows(logging_propensities=[0.0] * 4)
+    with pytest.raises(ValueError, match="logging propensities"):
+        _joint_estimate(_rebind_rows(readiness, bad_known), bad_known)
+    bad_interval = _joint_interval_rows(logging_propensity_lower=[0.0] * 4)
+    with pytest.raises(ValueError, match="positive and ordered"):
+        _joint_estimate(
+            _rebind_rows(interval_readiness, bad_interval),
+            bad_interval,
+        )
+    with pytest.raises(ValueError, match="joint-uncertainty diagnostics"):
+        _joint_estimate(replace(readiness, support_rate=None), rows)

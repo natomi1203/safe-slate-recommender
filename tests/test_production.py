@@ -378,3 +378,114 @@ def test_600_item_feed_shape_preserves_560_item_protected_core() -> None:
 def test_serving_contract_rejects_invalid_values(field: str, value: object) -> None:
     with pytest.raises(ValueError):
         guarded_rerank(**_base_request(**{field: value}))
+
+
+def test_service_latency_and_attachment_reject_remaining_invalid_contracts() -> None:
+    with pytest.raises(ValueError, match="latencies are required"):
+        create_service_latency_trace(
+            response_latency_ms=None,  # type: ignore[arg-type]
+            log_commit_latency_ms=1.0,
+        )
+    with pytest.raises(ValueError, match="ProposalLog"):
+        attach_service_latency("bad", create_service_latency_trace(response_latency_ms=1, log_commit_latency_ms=1))  # type: ignore[arg-type]
+
+    result = guarded_rerank(**_base_request())
+    with pytest.raises(ValueError, match="ServiceLatencyTrace"):
+        attach_service_latency(result.proposal_log, "bad")  # type: ignore[arg-type]
+    facade_too_short = create_service_latency_trace(
+        response_latency_ms=20.0,
+        log_commit_latency_ms=25.0,
+        guardrail_facade_ms=0.0,
+    )
+    with pytest.raises(ValueError, match="facade latency"):
+        attach_service_latency(result.proposal_log, facade_too_short)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"baseline_item_ids": [10, 10]}, "unique values"),
+        ({"remove_group_ids": [True, 1]}, "must contain integers"),
+        ({"remove_group_caps": {True: 1}}, "keys must be integers"),
+        ({"operation_conflicts": [(0,)]}, "contain two indices"),
+        ({"covariance": [[float("nan")]]}, "must be finite"),
+        ({"request_id": ""}, "non-empty string"),
+        ({"event_timestamp": ""}, "non-empty ISO-8601"),
+        ({"event_timestamp": "not-a-time"}, "must be ISO-8601"),
+        ({"beam_width": 0}, "positive integers"),
+        ({"gate_assessment": "bad"}, "ServingGateAssessment"),
+        ({"support_ok": 1}, "must be a boolean"),
+        ({"model_version": ""}, "non-empty string or None"),
+        ({"context": []}, "mapping or None"),
+        ({"protected_count": 5}, "cannot exceed"),
+    ],
+)
+def test_guarded_rerank_rejects_remaining_malformed_inputs(
+    overrides: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        guarded_rerank(**_base_request(**overrides))
+
+
+def test_no_available_replacement_uses_certified_fallback_reason() -> None:
+    result = guarded_rerank(
+        **_base_request(
+            remove_positions=[],
+            add_item_ids=[],
+            reward_deltas=[],
+            safety_mean_deltas=[],
+            safety_variances=[],
+        )
+    )
+    assert result.fallback
+    assert result.fallback_reason == "no_certified_replacement"
+
+
+def test_group_caps_and_operation_conflicts_reach_native_oracle() -> None:
+    result = guarded_rerank(
+        **_base_request(
+            remove_group_ids=[1, 2],
+            remove_group_caps={1: 1, 2: 1},
+            add_group_ids=[7, 8],
+            add_group_caps={7: 1, 8: 1},
+            operation_conflicts=[(0, 1)],
+        )
+    )
+    assert result.oracle.rechecked
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"uncertainty_snapshot_id": ""}, "non-empty string"),
+        ({"contrast_input_id": ""}, "non-empty string or None"),
+        ({"timeout_ms": True}, "nonnegative integer"),
+        ({"finalization_reserve_ms": -1}, "nonnegative integer"),
+        (
+            {"context": {"safe_slate_uncertainty": {}}},
+            "reserved",
+        ),
+    ],
+)
+def test_guarded_linear_rerank_rejects_remaining_wrapper_contracts(
+    overrides: dict[str, object], message: str
+) -> None:
+    values = {
+        "request_id": "linear-invalid",
+        "uncertainty_snapshot_id": "snapshot",
+        "contrast_input_id": "contrasts",
+        "baseline_item_ids": [10, 11, 12],
+        "protected_count": 2,
+        "remove_positions": [2],
+        "add_item_ids": [100],
+        "reward_deltas": [1.0],
+        "safety_mean_deltas": [1.0],
+        "contrast_features": [[1.0]],
+        "parameter_covariance": [[0.01]],
+        "baseline_metric": 0.5,
+        "degradation_tolerance": 0.02,
+        "max_replacements": 1,
+    }
+    values.update(overrides)
+    with pytest.raises(ValueError, match=message):
+        guarded_linear_rerank(**values)  # type: ignore[arg-type]
