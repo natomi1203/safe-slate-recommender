@@ -19,6 +19,8 @@
   "typed": true,
   "supports_papers": ["certified-reranking-systems", "certified-slate-oracle"],
   "source_revision": "1a8b4290755f00c1fb78a69602af336ebe7e7742",
+  "research_lineage": "docs/research-lineage.json",
+  "citation_file": "CITATION.cff",
   "install_extras": ["test"],
   "test_commands": [
     ["python", "-m", "pytest", "-q"],

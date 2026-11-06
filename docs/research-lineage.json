@@ -1,0 +1,223 @@
+{
+  "schema_version": "1.0.0",
+  "source": {
+    "repository": "https://github.com/natomi1203/purchase-aware-retrieval-research",
+    "frozen_revision": "1a8b4290755f00c1fb78a69602af336ebe7e7742",
+    "freeze_tag": "pr8-research-freeze-2026-11-06",
+    "registry_snapshot_revision": "2b166a64867f5d4ef4f78fa8b6e0e65c4cfe505e"
+  },
+  "adopted_research": [
+    {
+      "paper_id": "certified-reranking-systems",
+      "title": "Certified Re-ranking Systems Artifact and Public OPE Stress Test",
+      "publication_status_at_snapshot": "blocked_external_evidence",
+      "adoption_state": "stable_contracts_adopted",
+      "capabilities": [
+        {
+          "capability_id": "protected-baseline-fail-closed-serving",
+          "interfaces": [
+            "safe_slate.optimize_replacements",
+            "safe_slate.guarded_rerank",
+            "safe_slate.guarded_candidate_pool_rerank"
+          ],
+          "adopted_contract": "Preserve the protected baseline core and return the unchanged baseline when required serving evidence or a final safety check fails.",
+          "non_claim": "This contract does not establish production lift, calibration, latency, or external validity."
+        },
+        {
+          "capability_id": "proposal-dominating-observability",
+          "interfaces": [
+            "safe_slate.guarded_rerank",
+            "safe_slate.guarded_candidate_pool_rerank"
+          ],
+          "adopted_contract": "Record the proposal, served result, evidence gates, deadline state, and final-recheck outcome without treating a successful call as deployment evidence.",
+          "non_claim": "A complete log is operational evidence only and is not a causal or safety result by itself."
+        },
+        {
+          "capability_id": "immutable-offline-evaluation",
+          "interfaces": [
+            "safe_slate.audit_ope_readiness",
+            "safe_slate.run_no_clobber_ope"
+          ],
+          "adopted_contract": "Bind OPE to immutable input identities, settled-label and support gates, frozen thresholds, and no-clobber evidence publication.",
+          "non_claim": "Readiness and a verified bundle do not authorize rollout or convert partial support into a population point estimand."
+        }
+      ]
+    },
+    {
+      "paper_id": "certified-slate-oracle",
+      "title": "Certified Anytime Slate Oracles with Fail-Closed Safety",
+      "publication_status_at_snapshot": "blocked_external_evidence",
+      "adoption_state": "stable_contracts_adopted",
+      "capabilities": [
+        {
+          "capability_id": "certified-anytime-cardinality",
+          "interfaces": [
+            "safe_slate.optimize_slate",
+            "safe_slate.optimize_replacements"
+          ],
+          "adopted_contract": "Return a rechecked incumbent and an explicit lower and upper cardinality certificate when search stops early.",
+          "non_claim": "An open certificate interval is not an exact optimum or a paper-level empirical result."
+        },
+        {
+          "capability_id": "nonmonotone-constraint-correctness",
+          "interfaces": [
+            "safe_slate.optimize_slate"
+          ],
+          "adopted_contract": "Do not prune every descendant merely because a non-monotone whole-slate predicate rejects a partial slate.",
+          "non_claim": "The callback contract does not provide a general tractability guarantee for arbitrary constraints."
+        },
+        {
+          "capability_id": "shared-linear-uncertainty",
+          "interfaces": [
+            "safe_slate.optimize_slate",
+            "safe_slate.guarded_candidate_pool_rerank"
+          ],
+          "adopted_contract": "Retain covariance between operations and reject malformed, non-finite, asymmetric, or non-positive-semidefinite uncertainty inputs.",
+          "non_claim": "Input validation does not prove that an upstream uncertainty model is calibrated under deployment shift."
+        },
+        {
+          "capability_id": "mandatory-final-recheck",
+          "interfaces": [
+            "safe_slate.optimize_slate",
+            "safe_slate.optimize_replacements",
+            "safe_slate.guarded_rerank",
+            "safe_slate.guarded_candidate_pool_rerank"
+          ],
+          "adopted_contract": "Re-evaluate the selected incumbent before returning it and fail closed when callback execution or the final check is unsuccessful.",
+          "non_claim": "The cooperative timeout is not a hard service deadline and requires an external deadline boundary."
+        }
+      ]
+    }
+  ],
+  "external_foundations": [
+    {
+      "reference_id": "wu2016conservative",
+      "title": "Conservative Bandits",
+      "authors": ["Yifan Wu", "Roshan Shariff", "Tor Lattimore", "Csaba Szepesvari"],
+      "year": 2016,
+      "url": "https://proceedings.mlr.press/v48/wu16.html",
+      "relevance": ["conservative exploration", "baseline protection"],
+      "role": "background_only",
+      "direct_code_import": false
+    },
+    {
+      "reference_id": "kazerouni2017conservative",
+      "title": "Conservative Contextual Linear Bandits",
+      "authors": ["Abbas Kazerouni", "Mohammad Ghavamzadeh", "Yasin Abbasi-Yadkori", "Benjamin Van Roy"],
+      "year": 2017,
+      "url": "https://proceedings.neurips.cc/paper/2017/hash/bdc4626aa1d1df8e14d80d345b2a442d-Abstract.html",
+      "relevance": ["conservative contextual decisions", "linear uncertainty"],
+      "role": "background_only",
+      "direct_code_import": false
+    },
+    {
+      "reference_id": "laroche2019spibb",
+      "title": "Safe Policy Improvement with Baseline Bootstrapping",
+      "authors": ["Romain Laroche", "Paul Trichelair", "Remi Tachet des Combes"],
+      "year": 2019,
+      "url": "https://proceedings.mlr.press/v97/laroche19a.html",
+      "relevance": ["baseline-preserving policy improvement"],
+      "role": "background_only",
+      "direct_code_import": false
+    },
+    {
+      "reference_id": "swaminathan2017slate",
+      "title": "Off-policy Evaluation for Slate Recommendation",
+      "authors": ["Adith Swaminathan", "Akshay Krishnamurthy", "Alekh Agarwal", "Miroslav Dudik", "John Langford", "Damien Jose", "Imed Zitouni"],
+      "year": 2017,
+      "url": "https://proceedings.neurips.cc/paper/2017/hash/5352696a9ca3397beb79f116f3a33991-Abstract.html",
+      "relevance": ["slate off-policy evaluation"],
+      "role": "background_only",
+      "direct_code_import": false
+    },
+    {
+      "reference_id": "karampatziakis2021offpolicy",
+      "title": "Off-Policy Confidence Sequences",
+      "authors": ["Nikos Karampatziakis", "Paul Mineiro", "Aaditya Ramdas"],
+      "year": 2021,
+      "url": "https://proceedings.mlr.press/v139/karampatziakis21a.html",
+      "relevance": ["sequential off-policy inference"],
+      "role": "background_only",
+      "direct_code_import": false
+    },
+    {
+      "reference_id": "abbasi2011improved",
+      "title": "Improved Algorithms for Linear Stochastic Bandits",
+      "authors": ["Yasin Abbasi-Yadkori", "David Pal", "Csaba Szepesvari"],
+      "year": 2011,
+      "url": "https://proceedings.neurips.cc/paper/2011/hash/e1d5be1c7f2f456670de3d53c7b54f4a-Abstract.html",
+      "relevance": ["linear confidence bounds", "shared parameter uncertainty"],
+      "role": "background_only",
+      "direct_code_import": false
+    },
+    {
+      "reference_id": "ovadia2019uncertainty",
+      "title": "Can You Trust Your Model's Uncertainty? Evaluating Predictive Uncertainty Under Dataset Shift",
+      "authors": ["Yaniv Ovadia", "Emily Fertig", "Jie Ren", "Zachary Nado", "D. Sculley", "Sebastian Nowozin", "Joshua V. Dillon", "Balaji Lakshminarayanan", "Jasper Snoek"],
+      "year": 2019,
+      "url": "https://proceedings.neurips.cc/paper_files/paper/2019/hash/8558cb408c1d76621371888657d2eb1d-Abstract.html",
+      "relevance": ["uncertainty under dataset shift"],
+      "role": "background_only",
+      "direct_code_import": false
+    },
+    {
+      "reference_id": "rabanser2019failing",
+      "title": "Failing Loudly: An Empirical Study of Methods for Detecting Dataset Shift",
+      "authors": ["Stephan Rabanser", "Stephan Guennemann", "Zachary C. Lipton"],
+      "year": 2019,
+      "url": "https://proceedings.neurips.cc/paper_files/paper/2019/hash/846c260d715e5b854ffad5f70a516c88-Abstract.html",
+      "relevance": ["dataset-shift diagnostics"],
+      "role": "background_only",
+      "direct_code_import": false
+    }
+  ],
+  "excluded_research": [
+    {
+      "paper_id": "anytime-calibrated-neural-safety",
+      "status_at_snapshot": "human_review_pending",
+      "adoption_state": "excluded_pending_independent_review"
+    },
+    {
+      "paper_id": "evidence-preserving-representation-updates",
+      "status_at_snapshot": "research_in_progress",
+      "adoption_state": "excluded_pending_independent_review"
+    },
+    {
+      "paper_id": "resource-aware-full-minimax",
+      "status_at_snapshot": "human_review_pending",
+      "adoption_state": "excluded_pending_independent_review"
+    },
+    {
+      "paper_id": "deadline-adaptivity",
+      "status_at_snapshot": "draft_unreviewed",
+      "adoption_state": "excluded_pending_independent_review"
+    },
+    {
+      "paper_id": "scenario-tree-certification",
+      "status_at_snapshot": "draft_unreviewed",
+      "adoption_state": "excluded_pending_independent_review"
+    },
+    {
+      "paper_id": "adaptive-testability",
+      "status_at_snapshot": "draft_unreviewed",
+      "adoption_state": "excluded_pending_independent_review"
+    }
+  ],
+  "excluded_implementations": [
+    {
+      "implementation_id": "required_clusters",
+      "reason": "Paper-specific normal-approximation sample-size planning is not a general stable library contract.",
+      "disposition": "research_only"
+    },
+    {
+      "implementation_id": "certified-slate-oracle-external-validation-validator",
+      "reason": "The validator is bound to one paper, target-policy digest, evidence protocol, and software revision.",
+      "disposition": "research_only"
+    },
+    {
+      "implementation_id": "representation-revision-fail-closed-certifier-v1-draft",
+      "reason": "The checker supports one development-only architecture, property, and domain triple and is pending independent review.",
+      "disposition": "research_only"
+    }
+  ]
+}

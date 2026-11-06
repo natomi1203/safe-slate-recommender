@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+message: >-
+  If you use safe-slate-recommender, please cite the software and consult the
+  research lineage for the distinction between repository-authored research
+  contracts and third-party theoretical background.
+title: safe-slate-recommender
+type: software
+authors:
+  - family-names: Tomita
+    given-names: Naoyuki
+repository-code: https://github.com/natomi1203/safe-slate-recommender
+url: https://github.com/natomi1203/safe-slate-recommender
+version: 0.3.0
+license: Apache-2.0

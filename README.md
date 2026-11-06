@@ -18,6 +18,21 @@ supported surface and its claim limits. Maintainers should use the
 [release checklist](RELEASE_CHECKLIST.md) and current
 [PyPI readiness assessment](PYPI_READINESS.md); neither authorizes publication.
 
+## Research basis and citation
+
+This library extracts reusable software contracts from the author's
+[`purchase-aware-retrieval-research`](https://github.com/natomi1203/purchase-aware-retrieval-research)
+repository. The [research integration boundary](docs/research-integration.md)
+separates those repository-authored contracts from third-party theoretical
+background and from research that is not yet eligible for the stable API. The
+same classification is available as
+[machine-readable research lineage](docs/research-lineage.json), pinned to the
+frozen source and publication-registry revisions used for the assessment.
+
+Use [`CITATION.cff`](CITATION.cff) to cite the software. Citing the software
+does not imply that a manuscript's empirical, theoretical, or production
+claims have been independently validated.
+
 ## Development
 
 ```bash
