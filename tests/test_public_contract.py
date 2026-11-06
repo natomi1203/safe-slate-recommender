@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import tomllib
 from pathlib import Path
 from random import Random
 
@@ -36,6 +37,26 @@ def test_registered_public_api_is_importable() -> None:
         assert module_name == "safe_slate"
         assert callable(getattr(safe_slate, attribute))
         assert attribute in safe_slate.__all__
+
+
+def test_distribution_metadata_declares_apache_2_0() -> None:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    cargo = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))
+
+    assert pyproject["project"]["license"] == "Apache-2.0"
+    assert cargo["package"]["license"] == "Apache-2.0"
+
+
+def test_distribution_contains_full_apache_license_and_boundary_notice() -> None:
+    license_text = (ROOT / "LICENSE").read_text(encoding="utf-8")
+    licensing_text = (ROOT / "LICENSING.md").read_text(encoding="utf-8")
+
+    assert "Apache License" in license_text
+    assert "Version 2.0, January 2004" in license_text
+    assert "END OF TERMS AND CONDITIONS" in license_text
+    assert "CC-BY-4.0" not in license_text
+    assert "Apache-2.0" in licensing_text
+    assert "CC-BY-4.0" in licensing_text
 
 
 @pytest.mark.parametrize(

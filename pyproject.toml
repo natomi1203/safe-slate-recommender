@@ -8,7 +8,7 @@ version = "0.3.0"
 description = "Certified anytime slate construction backed by Rust"
 readme = "README.md"
 requires-python = ">=3.15"
-license = "CC-BY-4.0"
+license = "Apache-2.0"
 license-files = ["LICENSE"]
 keywords = ["recommender-systems", "safe-optimization", "slate-ranking", "rust"]
 classifiers = [

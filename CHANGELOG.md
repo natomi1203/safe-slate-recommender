@@ -2,6 +2,8 @@
 
 ## 0.3.0
 
+- Licensed the reusable software distribution under Apache-2.0 while retaining
+  CC-BY-4.0 for repository-level research and publication artifacts.
 - Added a documented seven-symbol stable API boundary, promoting the measured
   serving-gate assessor and candidate-pool facade alongside the existing core,
   plus a beginner quickstart, compatibility and wheel policy, research-

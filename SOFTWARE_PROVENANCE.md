@@ -14,3 +14,8 @@ the paper.
 The three-way extraction decision and the excluded research topics are
 recorded in `docs/research-integration.md`. That document is a software scope
 map, not a publication result.
+
+The reusable distribution is licensed under Apache-2.0 by its rights holder.
+Repository-level papers, evidence, protocols, and publication artifacts remain
+under CC-BY-4.0. See `LICENSING.md` for the exact boundary; this licensing
+decision does not alter the frozen source revision named above.

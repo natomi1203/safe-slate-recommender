@@ -13,9 +13,8 @@ approval.
 - [ ] The diff contains no paper, theorem ownership, fixed result, credentials,
       private URI, or row-level research data.
 - [ ] Version agrees in `pyproject.toml`, `Cargo.toml`, and `CHANGELOG.md`.
-- [ ] The owner confirms that `CC-BY-4.0` is intentionally retained for the
-      software distribution; changing the repository's license requires a
-      separate legal/ownership decision.
+- [x] The rights holder confirms Apache-2.0 for this software distribution;
+      repository-level research and publication artifacts remain CC-BY-4.0.
 
 ## Verification
 
@@ -40,13 +39,19 @@ approval.
 
 ## Package index readiness
 
-- [ ] The distribution name is rechecked on PyPI immediately before upload.
+- [ ] The distribution name is rechecked on PyPI and TestPyPI immediately
+      before upload.
 - [ ] `twine check` or an equivalent metadata validator passes for every wheel
       and the sdist.
-- [ ] TestPyPI installation is verified by exact filename and SHA-256.
-- [ ] The owner approves the final artifact hashes and publication command.
+- [ ] The release workflow runs from its reviewed default-branch definition,
+      builds an exact source SHA, and publishes through the protected
+      `testpypi` environment with OIDC Trusted Publishing.
+- [ ] TestPyPI exposes exactly five platform wheels and one sdist whose
+      filenames and SHA-256 values match the frozen release manifest.
+- [ ] TestPyPI installation is smoke-tested on every supported runner.
+- [ ] The owner approves the final artifact hashes and TestPyPI command.
 
-## Post-publication, only after approval
+## Production publication, only after separate approval
 
 - [ ] Upload immutable artifacts without rebuilding.
 - [ ] Create and sign the tag and GitHub Release from the approved revision.

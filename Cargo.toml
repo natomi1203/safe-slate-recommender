@@ -4,7 +4,7 @@ version = "0.3.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Certified anytime slate construction with Python bindings"
-license = "CC-BY-4.0"
+license = "Apache-2.0"
 repository = "https://github.com/natomi1203/purchase-aware-retrieval-research"
 
 [lib]
