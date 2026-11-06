@@ -196,7 +196,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("artifact_dir", type=Path)
     parser.add_argument("--source-sha", required=True)
-    parser.add_argument("--version", default="0.3.0")
+    parser.add_argument("--version", default="0.3.1")
     parser.add_argument("--output-dir", type=Path)
     args = parser.parse_args()
     output_dir = args.output_dir or args.artifact_dir

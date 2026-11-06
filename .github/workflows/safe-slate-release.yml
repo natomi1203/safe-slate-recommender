@@ -1,4 +1,4 @@
-name: Qualify safe-slate-recommender release
+name: Qualify and publish safe-slate-recommender
 
 on:
   workflow_dispatch:
@@ -12,6 +12,11 @@ on:
         required: true
         default: false
         type: boolean
+      publish_pypi:
+        description: Publish the same TestPyPI-verified artifacts to production PyPI
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -20,7 +25,7 @@ env:
   PYTHON_VERSION: "3.15"
   RUST_VERSION: "1.99.0"
   MATURIN_VERSION: "v1.16.0"
-  PACKAGE_VERSION: "0.3.0"
+  PACKAGE_VERSION: "0.3.1"
 
 jobs:
   validate-source:
@@ -29,9 +34,15 @@ jobs:
       - name: Validate source SHA format
         env:
           SOURCE_SHA: ${{ inputs.source_sha }}
+          PUBLISH_TESTPYPI: ${{ inputs.publish_testpypi }}
+          PUBLISH_PYPI: ${{ inputs.publish_pypi }}
         run: |
           if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
             echo "source_sha must be a lowercase 40-character commit SHA" >&2
+            exit 1
+          fi
+          if [[ "$PUBLISH_PYPI" == "true" && "$PUBLISH_TESTPYPI" != "true" ]]; then
+            echo "production PyPI publication requires the same run to publish and verify TestPyPI first" >&2
             exit 1
           fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -46,12 +57,14 @@ jobs:
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           python3 - <<'PY'
           import tomllib
+          import os
           from pathlib import Path
 
           pyproject = tomllib.loads(Path("pyproject.toml").read_text())
           cargo = tomllib.loads(Path("Cargo.toml").read_text())
-          assert pyproject["project"]["version"] == "0.3.0"
-          assert cargo["package"]["version"] == "0.3.0"
+          expected = os.environ["PACKAGE_VERSION"]
+          assert pyproject["project"]["version"] == expected
+          assert cargo["package"]["version"] == expected
           assert pyproject["project"]["license"] == "Apache-2.0"
           assert cargo["package"]["license"] == "Apache-2.0"
           PY
@@ -234,13 +247,15 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
           from urllib.error import HTTPError
           from urllib.request import urlopen
 
           manifest = json.loads(Path("release/release-manifest.json").read_text())
           expected = {item["filename"]: item["sha256"] for item in manifest["files"]}
-          url = "https://test.pypi.org/pypi/safe-slate-recommender/0.3.0/json"
+          version = os.environ["PACKAGE_VERSION"]
+          url = f"https://test.pypi.org/pypi/safe-slate-recommender/{version}/json"
           try:
               with urlopen(url, timeout=30) as response:
                   payload = json.load(response)
@@ -296,6 +311,7 @@ jobs:
         run: |
           python - <<'PY'
           import json
+          import os
           from pathlib import Path
           import time
           from urllib.error import HTTPError
@@ -303,7 +319,8 @@ jobs:
 
           manifest = json.loads(Path("release/release-manifest.json").read_text())
           expected = {item["filename"]: item["sha256"] for item in manifest["files"]}
-          url = "https://test.pypi.org/pypi/safe-slate-recommender/0.3.0/json"
+          version = os.environ["PACKAGE_VERSION"]
+          url = f"https://test.pypi.org/pypi/safe-slate-recommender/{version}/json"
           remote = None
           for attempt in range(12):
               try:
@@ -372,7 +389,185 @@ jobs:
                   "--index-url",
                   "https://test.pypi.org/simple/",
                   "--no-deps",
-                  "safe-slate-recommender==0.3.0",
+                  f"safe-slate-recommender=={os.environ['PACKAGE_VERSION']}",
+              ],
+              check=True,
+          )
+          subprocess.run([python, "-m", "pip", "check"], check=True)
+          smoke = """
+          from safe_slate import optimize_slate
+          kwargs = dict(
+              rewards=[2.0, 1.0],
+              safety_means=[1.0, 1.0],
+              safety_variances=[0.0, 0.0],
+              max_items=1,
+          )
+          first = optimize_slate(**kwargs)
+          second = optimize_slate(**kwargs)
+          assert first.selected_indices == second.selected_indices == [0]
+          assert first.rechecked and second.rechecked
+          """
+          subprocess.run([python, "-c", smoke], cwd=environment, check=True)
+          PY
+
+  pypi-preflight:
+    name: Check production PyPI retry safety
+    if: inputs.publish_pypi == true
+    needs: smoke-test-testpypi
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: qualified-release-${{ inputs.source_sha }}
+          path: release
+      - name: Reject conflicting existing production files
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from urllib.error import HTTPError
+          from urllib.request import urlopen
+
+          manifest = json.loads(Path("release/release-manifest.json").read_text())
+          expected = {item["filename"]: item["sha256"] for item in manifest["files"]}
+          version = os.environ["PACKAGE_VERSION"]
+          url = f"https://pypi.org/pypi/safe-slate-recommender/{version}/json"
+          try:
+              with urlopen(url, timeout=30) as response:
+                  payload = json.load(response)
+          except HTTPError as error:
+              if error.code != 404:
+                  raise
+              payload = {"urls": []}
+          for item in payload["urls"]:
+              filename = item["filename"]
+              remote_hash = item["digests"]["sha256"]
+              if filename not in expected or expected[filename] != remote_hash:
+                  raise SystemExit(f"conflicting production PyPI file: {filename}")
+          print(f"production preflight accepted {len(payload['urls'])} existing file(s)")
+          PY
+
+  publish-pypi:
+    name: Publish to production PyPI with OIDC
+    if: inputs.publish_pypi == true
+    needs: pypi-preflight
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/p/safe-slate-recommender/
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: qualified-release-${{ inputs.source_sha }}
+          path: release
+      - name: Publish immutable production packages
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: release/packages
+          skip-existing: true
+          verify-metadata: true
+          print-hash: true
+          attestations: true
+
+  verify-pypi:
+    name: Match production PyPI hashes
+    if: inputs.publish_pypi == true
+    needs: publish-pypi
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: qualified-release-${{ inputs.source_sha }}
+          path: release
+      - name: Compare production files with manifest
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import time
+          from urllib.error import HTTPError
+          from urllib.request import urlopen
+
+          manifest = json.loads(Path("release/release-manifest.json").read_text())
+          expected = {item["filename"]: item["sha256"] for item in manifest["files"]}
+          version = os.environ["PACKAGE_VERSION"]
+          url = f"https://pypi.org/pypi/safe-slate-recommender/{version}/json"
+          remote = None
+          for attempt in range(12):
+              try:
+                  with urlopen(url, timeout=30) as response:
+                      payload = json.load(response)
+                  remote = {
+                      item["filename"]: item["digests"]["sha256"]
+                      for item in payload["urls"]
+                  }
+              except HTTPError as error:
+                  if error.code != 404:
+                      raise
+              if remote == expected:
+                  break
+              if attempt < 11:
+                  time.sleep(10)
+          if remote != expected:
+              raise SystemExit(
+                  f"production PyPI files differ from manifest: expected={expected}, remote={remote}"
+              )
+          print("production PyPI filenames and SHA-256 values match the release manifest")
+          PY
+
+  smoke-test-pypi:
+    name: Install from production PyPI on ${{ matrix.platform.name }}
+    if: inputs.publish_pypi == true
+    needs: verify-pypi
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: linux-x86_64
+            os: ubuntu-24.04
+          - name: linux-aarch64
+            os: ubuntu-24.04-arm
+          - name: macos-x86_64
+            os: macos-15-intel
+          - name: macos-arm64
+            os: macos-15
+          - name: windows-x86_64
+            os: windows-2025
+    runs-on: ${{ matrix.platform.os }}
+    steps:
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install exact production version and smoke-test
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          import tempfile
+          import venv
+
+          environment = Path(tempfile.mkdtemp(prefix="safe-slate-pypi-"))
+          venv.EnvBuilder(with_pip=True).create(environment)
+          python = environment / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+          subprocess.run(
+              [
+                  python,
+                  "-m",
+                  "pip",
+                  "install",
+                  "--index-url",
+                  "https://pypi.org/simple/",
+                  "--retries",
+                  "10",
+                  "--no-deps",
+                  f"safe-slate-recommender=={os.environ['PACKAGE_VERSION']}",
               ],
               check=True,
           )

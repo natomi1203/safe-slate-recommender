@@ -3,8 +3,8 @@
 `safe-slate-recommender` requires Python 3.15 or newer. It ships a compiled
 Rust extension, so install a wheel that matches your operating system and CPU.
 
-Version 0.3.0 is qualified on TestPyPI but is not yet published to production
-PyPI. Install that exact build explicitly:
+Version 0.3.1 is being qualified for production PyPI. Until that workflow
+completes, version 0.3.0 remains the latest qualified TestPyPI build:
 
 ```bash
 python3.15 -m pip install \
