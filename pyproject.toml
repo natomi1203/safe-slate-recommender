@@ -5,7 +5,7 @@ build-backend = "maturin"
 [project]
 name = "safe-slate-recommender"
 version = "0.3.1"
-description = "Certified anytime slate construction backed by Rust"
+description = "TommySlate: every recommendation checked by a certified Rust-backed slate optimizer"
 readme = "README.md"
 requires-python = ">=3.15"
 license = "Apache-2.0"

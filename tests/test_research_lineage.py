@@ -118,7 +118,10 @@ def test_citation_metadata_matches_package_metadata() -> None:
     citation = _root_cff_scalars()
 
     assert citation["cff-version"] == "1.2.0"
-    assert citation["title"] == project["name"]
+    library = _load_json(ROOT / "library.json")
+
+    assert citation["title"] == library["display_name"]
+    assert library["distribution_name"] == project["name"]
     assert citation["version"] == project["version"]
     assert citation["license"] == project["license"]
     assert citation["repository-code"] == project["urls"]["Repository"]
