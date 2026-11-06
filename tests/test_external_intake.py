@@ -2,7 +2,11 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
+import math
 from pathlib import Path
+import runpy
+import struct
+import sys
 
 import pytest
 
@@ -11,6 +15,7 @@ from safe_slate import (
     OPE_REQUIRED_INPUT_ROLES,
     POSITIVITY_EVIDENCE_SCHEMA_VERSION,
     canonical_population_positivity_evidence_bytes,
+    canonical_matrix_bytes,
     canonical_matrix_f64le_bytes,
     create_population_positivity_evidence,
     create_statistical_population_positivity_evidence,
@@ -21,7 +26,12 @@ from safe_slate import (
     load_input_manifest,
     write_external_input_manifest,
 )
-from safe_slate.external_intake import main as external_intake_main
+from safe_slate.external_intake import (
+    F64LE_MAGIC,
+    _validate_matrix_file,
+    load_intake_spec,
+    main as external_intake_main,
+)
 
 
 TEMPLATE = Path(__file__).resolve().parents[1] / "external-inputs.template.json"
@@ -368,3 +378,217 @@ def test_external_intake_rejects_trace_bound_to_different_primary_bytes(
 
     with pytest.raises(ValueError, match="digest mismatch"):
         freeze_external_input_manifest(spec)
+
+
+def test_external_intake_spec_loader_rejects_noncanonical_json(tmp_path: Path) -> None:
+    cases = [
+        ("[]", "one JSON object"),
+        ('{"value": 1, "value": 2}', "duplicate JSON key"),
+        ('{"value": NaN}', "non-finite JSON"),
+    ]
+    for index, (contents, message) in enumerate(cases):
+        path = tmp_path / f"bad-spec-{index}.json"
+        path.write_text(contents, encoding="utf-8")
+        with pytest.raises(ValueError, match=message):
+            load_intake_spec(path)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda spec: spec.pop("manifest_id"), "keys differ"),
+        (
+            lambda spec: spec.update(schema_version="2.0"),
+            "unsupported intake schema_version",
+        ),
+        (lambda spec: spec.update(maximum_input_bytes=True), "positive integer"),
+        (lambda spec: spec.update(maximum_log_records=0), "positive integer"),
+        (lambda spec: spec.update(inputs={}), "inputs must be a list"),
+        (lambda spec: spec["inputs"].__setitem__(0, []), "must be an object"),
+        (lambda spec: spec["inputs"][0].pop("input_id"), "keys differ"),
+        (
+            lambda spec: spec["inputs"][0].update(semantic_role="unknown"),
+            "unknown semantic_role",
+        ),
+        (lambda spec: spec.update(maximum_input_bytes=1), "maximum_input_bytes"),
+    ],
+)
+def test_external_intake_rejects_malformed_spec_contract(
+    tmp_path: Path, mutation, message: str
+) -> None:
+    spec = _spec(tmp_path)
+    mutation(spec)
+    with pytest.raises(ValueError, match=message):
+        freeze_external_input_manifest(spec)
+
+
+@pytest.mark.parametrize(
+    ("role", "field", "value", "message"),
+    [
+        (
+            "candidate_action_log",
+            "schema_version",
+            "wrong",
+            "candidate_action_log schema_version",
+        ),
+        (
+            "service_trace_completion",
+            "schema_version",
+            "wrong",
+            "service_trace_completion schema_version",
+        ),
+        (
+            "linear_parameter_covariance",
+            "schema_version",
+            "wrong",
+            "explicitly versioned matrix",
+        ),
+        (
+            "population_positivity_evidence",
+            "schema_version",
+            "wrong",
+            "positivity_evidence schema_version",
+        ),
+        (
+            "population_positivity_evidence",
+            "snapshot_time",
+            "2026-10-07T00:00:00+09:00",
+            "snapshot_time must equal audited_at",
+        ),
+        (
+            "population_positivity_evidence",
+            "temporal_scope",
+            "feature",
+            "must use atemporal scope",
+        ),
+    ],
+)
+def test_external_intake_rejects_role_specific_schema_mismatches(
+    tmp_path: Path, role: str, field: str, value: str, message: str
+) -> None:
+    spec = _spec(tmp_path)
+    entry = next(item for item in spec["inputs"] if item["semantic_role"] == role)
+    entry[field] = value
+    with pytest.raises(ValueError, match=message):
+        freeze_external_input_manifest(spec)
+
+
+def test_matrix_intake_rejects_noncanonical_and_truncated_encodings(
+    tmp_path: Path,
+) -> None:
+    json_path = tmp_path / "matrix.json"
+    json_path.write_bytes(canonical_matrix_bytes([[1.0]]) + b" ")
+    with pytest.raises(ValueError, match="not in canonical"):
+        _validate_matrix_file(json_path, "safe-slate-matrix-json-v1")
+
+    cases = [
+        (b"bad-header", "invalid header"),
+        (F64LE_MAGIC + b"short", "missing its shape"),
+        (F64LE_MAGIC + struct.pack("<QQ", 1, 1), "byte size"),
+        (
+            F64LE_MAGIC + struct.pack("<QQ", 1, 1) + struct.pack("<d", math.nan),
+            "non-finite",
+        ),
+    ]
+    for index, (contents, message) in enumerate(cases):
+        path = tmp_path / f"matrix-{index}.bin"
+        path.write_bytes(contents)
+        with pytest.raises(ValueError, match=message):
+            _validate_matrix_file(path, "safe-slate-matrix-f64le-v1")
+
+    with pytest.raises(ValueError, match="unsupported matrix"):
+        _validate_matrix_file(json_path, "unknown")
+
+
+def test_external_intake_writer_requires_shared_existing_parent(tmp_path: Path) -> None:
+    spec = _spec(tmp_path)
+    spec_path = tmp_path / "intake.json"
+    spec_path.write_text(json.dumps(spec), encoding="utf-8")
+    output_parent = tmp_path / "output"
+    output_parent.mkdir()
+    other_parent = tmp_path / "other"
+    other_parent.mkdir()
+
+    with pytest.raises(ValueError, match="contain both outputs"):
+        write_external_input_manifest(
+            spec_path,
+            output=output_parent / "manifest.json",
+            completion_marker=other_parent / "complete.json",
+        )
+
+
+def test_external_intake_accepts_canonical_json_matrices(tmp_path: Path) -> None:
+    spec = _spec(tmp_path)
+    for entry in spec["inputs"]:
+        if entry["semantic_role"] in {
+            "linear_parameter_covariance",
+            "request_contrast_features",
+        }:
+            Path(entry["path"]).write_bytes(canonical_matrix_bytes([[1.0, 0.0]]))
+            entry["schema_version"] = "safe-slate-matrix-json-v1"
+    assert freeze_external_input_manifest(spec).verify_digest()
+
+
+def test_external_intake_rejects_non_mapping_and_embedded_primary_trace(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="spec must be a mapping"):
+        freeze_external_input_manifest([])  # type: ignore[arg-type]
+
+    spec = _spec(tmp_path)
+    candidate = next(
+        entry
+        for entry in spec["inputs"]
+        if entry["semantic_role"] == "candidate_action_log"
+    )
+    completion = next(
+        entry
+        for entry in spec["inputs"]
+        if entry["semantic_role"] == "service_trace_completion"
+    )
+    candidate_payload = json.loads(Path(candidate["path"]).read_text())
+    completion_payload = json.loads(Path(completion["path"]).read_text())
+    candidate_payload["service_latency_trace"] = completion_payload[
+        "service_latency_trace"
+    ]
+    Path(candidate["path"]).write_text(json.dumps(candidate_payload) + "\n")
+    with pytest.raises(ValueError, match="must not embed"):
+        freeze_external_input_manifest(spec)
+
+
+def test_external_intake_rejects_declared_positivity_schema_mismatch(
+    tmp_path: Path,
+) -> None:
+    spec = _spec(tmp_path)
+    positivity = next(
+        entry
+        for entry in spec["inputs"]
+        if entry["semantic_role"] == "population_positivity_evidence"
+    )
+    positivity["schema_version"] = "safe-slate-population-positivity-evidence-2.0"
+    with pytest.raises(ValueError, match="declared schema does not match bytes"):
+        freeze_external_input_manifest(spec)
+
+
+def test_external_intake_module_entrypoint(tmp_path: Path, monkeypatch) -> None:
+    spec = _spec(tmp_path)
+    spec_path = tmp_path / "module-intake.json"
+    spec_path.write_text(json.dumps(spec))
+    output_dir = tmp_path / "module-output"
+    output_dir.mkdir()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "safe_slate.external_intake",
+            "--spec",
+            str(spec_path),
+            "--output",
+            str(output_dir / "manifest.json"),
+            "--completion-marker",
+            str(output_dir / "complete.json"),
+        ],
+    )
+    with pytest.warns(RuntimeWarning, match="found in sys.modules"):
+        runpy.run_module("safe_slate.external_intake", run_name="__main__")
+    assert (output_dir / "complete.json").is_file()

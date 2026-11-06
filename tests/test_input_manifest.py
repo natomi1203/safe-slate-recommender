@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
 
@@ -343,6 +344,8 @@ def test_observed_input_audit_requires_exact_complete_identity_set() -> None:
         value.input_id for value in manifest.inputs
     )
     assert verification.reasons == ()
+    assert verification.to_dict()["valid"] is True
+    assert observations[0].to_dict()["input_id"] == observations[0].input_id
 
 
 def test_backend_independent_observer_registry_audits_all_schemes() -> None:
@@ -359,6 +362,7 @@ def test_backend_independent_observer_registry_audits_all_schemes() -> None:
     assert batch.verification.valid
     assert len(batch.observations) == len(manifest.inputs)
     assert batch.reasons == ()
+    assert batch.to_dict()["valid"] is True
 
 
 def test_observer_registry_fails_closed_on_missing_or_failed_adapter() -> None:
@@ -451,3 +455,130 @@ def test_invalid_observed_identity_is_rejected(field: str, value: object) -> Non
     values[field] = value
     with pytest.raises(ValueError):
         create_observed_input_identity(**values)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"snapshot_time": ""}, "non-empty ISO-8601"),
+        ({"snapshot_time": "not-a-time"}, "must be ISO-8601"),
+        ({"contains_credentials": 1}, "safety flags must be boolean"),
+    ],
+)
+def test_input_identity_rejects_remaining_malformed_values(
+    overrides: dict[str, object], message: str
+) -> None:
+    values: dict[str, object] = {
+        "input_id": "input",
+        "semantic_role": "role",
+        "canonical_uri": "gs://bucket/input",
+        "version": "v1",
+        "byte_size": 1,
+        "sha256_digest": _digest("input"),
+        "snapshot_time": "2026-01-01T00:00:00+09:00",
+        "temporal_scope": "atemporal",
+        "schema_version": "1.0",
+    }
+    values.update(overrides)
+    with pytest.raises(ValueError, match=message):
+        create_immutable_input(**values)  # type: ignore[arg-type]
+
+
+def test_local_hashing_and_observation_reject_nonfiles(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="regular file"):
+        observed_input_from_local_file(tmp_path, input_id="dir", version="v1")
+
+
+def test_observer_registry_rejects_invalid_registry_and_results() -> None:
+    manifest = _manifest()
+    with pytest.raises(ValueError, match="observers must map"):
+        observe_manifest_inputs(manifest, observers=[])  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="may not be overridden"):
+        observe_manifest_inputs(manifest, observers={"file": _observe_entry})
+    with pytest.raises(ValueError, match="must be callable"):
+        observe_manifest_inputs(manifest, observers={"gs": None})  # type: ignore[dict-item]
+
+    invalid = observe_manifest_inputs(
+        manifest,
+        observers={scheme: (lambda _: object()) for scheme in ("gs", "model", "query", "git")},
+    )
+    assert any("input_observer_invalid_result" in reason for reason in invalid.reasons)
+
+
+def test_tampered_manifest_fails_all_observation_and_local_verification_paths() -> None:
+    tampered = replace(_manifest(), manifest_digest="0" * 64)
+    batch = observe_manifest_inputs(tampered)
+    audit = audit_input_manifest_observations(tampered, ())
+    local = verify_local_manifest_inputs(tampered)
+    assert not batch.valid and batch.manifest_digest is None
+    assert audit.reasons == ("manifest_invalid_or_tampered",)
+    assert local.reasons == ("manifest_invalid_or_tampered",)
+    assert local.to_dict()["valid"] is False
+
+
+def test_observed_audit_rejects_invalid_observation_type() -> None:
+    with pytest.raises(ValueError, match="ObservedInputIdentity"):
+        audit_input_manifest_observations(_manifest(), ["bad"])  # type: ignore[list-item]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"required_roles": ()}, "required_roles"),
+        ({"required_roles": ("same", "same")}, "required_roles"),
+        ({"inputs": ()}, "ImmutableInput entries"),
+        ({"inputs": ("bad",)}, "ImmutableInput entries"),
+    ],
+)
+def test_manifest_rejects_empty_duplicate_and_invalid_collections(
+    overrides: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _manifest(**overrides)
+
+
+def test_manifest_rejects_reintroduced_safety_flags() -> None:
+    inputs = _inputs()
+    inputs[0] = replace(inputs[0], contains_credentials=True)
+    with pytest.raises(ValueError, match="safety flags violated"):
+        _manifest(inputs=inputs)
+
+
+def test_manifest_loader_rejects_type_and_schema_drift() -> None:
+    with pytest.raises(ValueError, match="must be a mapping"):
+        load_input_manifest([])  # type: ignore[arg-type]
+    payload = _manifest().to_dict()
+    payload.pop("manifest_id")
+    with pytest.raises(ValueError, match="fields"):
+        load_input_manifest(payload)
+
+
+def test_local_verifier_reports_size_and_unreadable_inputs(tmp_path: Path) -> None:
+    local = tmp_path / "input.bin"
+    local.write_bytes(b"original")
+    entry = immutable_input_from_local_file(
+        local,
+        input_id="local",
+        semantic_role="local_role",
+        version="v1",
+        snapshot_time="2026-01-01T00:00:00+09:00",
+        temporal_scope="atemporal",
+        schema_version="1.0",
+    )
+    manifest = create_input_manifest(
+        manifest_id="local-manifest",
+        population_identity="population",
+        created_at="2026-01-02T00:00:00+09:00",
+        feature_cutoff="2026-01-01T00:00:00+09:00",
+        label_cutoff="2026-01-01T00:00:00+09:00",
+        required_roles=("local_role",),
+        inputs=(entry,),
+    )
+    local.write_bytes(b"x")
+    assert "local_input_size_mismatch:local" in verify_local_manifest_inputs(manifest).reasons
+    local.unlink()
+    assert "local_input_unreadable:local" in verify_local_manifest_inputs(manifest).reasons
+    assert any(
+        reason == "input_observer_failed:local:file"
+        for reason in observe_manifest_inputs(manifest).reasons
+    )

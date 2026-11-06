@@ -528,3 +528,149 @@ def test_positivity_identity_digest_and_decision_are_contract_bound() -> None:
         assert result.decision == "evidence_rejected"
         assert result.readiness is None
         assert reason in result.reasons
+
+
+def test_manifest_bound_readiness_rejects_invalid_public_arguments_and_times() -> None:
+    manifest = _manifest()
+    contract = _contract(manifest)
+    with pytest.raises(ValueError, match="untampered OpeEvaluationContract"):
+        audit_manifest_bound_ope_readiness(
+            "bad",  # type: ignore[arg-type]
+            manifest,
+            _observations(manifest),
+            analysis_timestamp="2026-10-02T00:00:00+09:00",
+        )
+    with pytest.raises(ValueError, match="untampered manifest"):
+        audit_manifest_bound_ope_readiness(
+            contract,
+            "bad",  # type: ignore[arg-type]
+            (),
+            analysis_timestamp="2026-10-02T00:00:00+09:00",
+        )
+    for timestamp, message in [
+        ("not-a-time", "ISO-8601"),
+        ("2026-10-02T00:00:00", "timezone"),
+    ]:
+        with pytest.raises(ValueError, match=message):
+            audit_manifest_bound_ope_readiness(
+                contract,
+                manifest,
+                _observations(manifest),
+                analysis_timestamp=timestamp,
+                population_positivity_evidence=_positivity_evidence(),
+                **_rows(),
+            )
+
+
+def test_manifest_bound_readiness_reports_digest_and_temporal_mismatches() -> None:
+    manifest = _manifest()
+    other = _manifest(manifest_id="other")
+    digest_mismatch = audit_manifest_bound_ope_readiness(
+        _contract(other),
+        manifest,
+        _observations(manifest),
+        analysis_timestamp="2026-10-02T00:00:00+09:00",
+        population_positivity_evidence=_positivity_evidence(),
+        **_rows(),
+    )
+    assert "input_manifest_contract_digest_mismatch" in digest_mismatch.reasons
+
+    feature_mismatch = audit_manifest_bound_ope_readiness(
+        _contract(manifest, final_window_end="2026-09-03T00:00:00+09:00"),
+        manifest,
+        _observations(manifest),
+        analysis_timestamp="2026-10-02T00:00:00+09:00",
+        population_positivity_evidence=_positivity_evidence(),
+        **_rows(),
+    )
+    assert "feature_cutoff_not_equal_to_final_window_end" in feature_mismatch.reasons
+
+    label_mismatch = audit_manifest_bound_ope_readiness(
+        _contract(manifest, earliest_analysis_time="2026-10-01T00:00:00+09:00"),
+        manifest,
+        _observations(manifest),
+        analysis_timestamp="2026-10-02T00:00:00+09:00",
+        population_positivity_evidence=_positivity_evidence(),
+        **_rows(),
+    )
+    assert "label_cutoff_outside_settlement_boundary" in label_mismatch.reasons
+
+    created_after = audit_manifest_bound_ope_readiness(
+        _contract(manifest, earliest_analysis_time="2026-10-01T00:00:00+09:00"),
+        manifest,
+        _observations(manifest),
+        analysis_timestamp="2026-10-01T00:00:00+09:00",
+        population_positivity_evidence=_positivity_evidence(),
+        **_rows(),
+    )
+    assert "input_manifest_created_after_analysis" in created_after.reasons
+
+
+def test_manifest_bound_readiness_checks_positivity_schema_snapshot_and_audit_time() -> None:
+    evidence = _positivity_evidence()
+    base = _manifest(positivity_evidence=evidence)
+
+    def changed_manifest(**changes):
+        inputs = [
+            replace(value, **changes)
+            if value.semantic_role == "population_positivity_evidence"
+            else value
+            for value in base.inputs
+        ]
+        return create_input_manifest(
+            manifest_id="changed-positivity-input",
+            population_identity=base.population_identity,
+            created_at=base.created_at,
+            feature_cutoff=base.feature_cutoff,
+            label_cutoff=base.label_cutoff,
+            required_roles=base.required_roles,
+            inputs=inputs,
+        )
+
+    for manifest, supplied, reason in [
+        (
+            changed_manifest(schema_version="wrong"),
+            evidence,
+            "population_positivity_schema_mismatch",
+        ),
+        (
+            changed_manifest(snapshot_time="2026-09-30T00:00:00+09:00"),
+            evidence,
+            "population_positivity_snapshot_mismatch",
+        ),
+    ]:
+        result = audit_manifest_bound_ope_readiness(
+            _contract(manifest),
+            manifest,
+            _observations(manifest),
+            analysis_timestamp="2026-10-02T00:00:00+09:00",
+            population_positivity_evidence=supplied,
+            **_rows(),
+        )
+        assert reason in result.reasons
+
+    late_evidence = _positivity_evidence(audited_at="2026-10-03T00:00:00+09:00")
+    late_manifest = _manifest(positivity_evidence=late_evidence)
+    late = audit_manifest_bound_ope_readiness(
+        _contract(late_manifest),
+        late_manifest,
+        _observations(late_manifest),
+        analysis_timestamp="2026-10-04T00:00:00+09:00",
+        population_positivity_evidence=late_evidence,
+        **_rows(),
+    )
+    assert "population_positivity_audited_after_manifest" in late.reasons
+
+    short_evidence = _statistical_positivity_evidence(
+        validity_end="2026-09-01T12:00:00+09:00"
+    )
+    short_manifest = _manifest(positivity_evidence=short_evidence)
+    short = audit_manifest_bound_ope_readiness(
+        _contract(short_manifest),
+        short_manifest,
+        _observations(short_manifest),
+        analysis_timestamp="2026-10-02T00:00:00+09:00",
+        population_positivity_evidence=short_evidence,
+        **_rows(),
+    )
+    assert "population_positivity_validity_ends_before_final_window" in short.reasons

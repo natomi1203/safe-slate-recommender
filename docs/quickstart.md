@@ -3,13 +3,18 @@
 `safe-slate-recommender` requires Python 3.15 or newer. It ships a compiled
 Rust extension, so install a wheel that matches your operating system and CPU.
 
+Version 0.3.0 is qualified on TestPyPI but is not yet published to production
+PyPI. Install that exact build explicitly:
+
 ```bash
-python3.15 -m pip install safe-slate-recommender
+python3.15 -m pip install \
+  --index-url https://test.pypi.org/simple/ \
+  --no-deps \
+  safe-slate-recommender==0.3.0
 ```
 
-The package has no runtime Python dependencies. Until a release is published,
-build and install the wheel from a trusted checkout as described in the
-[release checklist](../RELEASE_CHECKLIST.md).
+The package has no runtime Python dependencies. For a source build, use a
+trusted checkout and follow the [release checklist](../RELEASE_CHECKLIST.md).
 
 ## Choose a certified slate
 

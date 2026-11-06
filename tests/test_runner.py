@@ -25,6 +25,7 @@ from test_manifest_bound_ope import (
     _positivity_evidence,
     _rows,
 )
+from safe_slate.runner import _attestation, _require
 
 
 def _estimation_evidence(**overrides: object) -> dict[str, object]:
@@ -54,26 +55,28 @@ def _run(
     estimation=None,
     collection_complete: bool = True,
     label_snapshot_digest: str | None = "c" * 64,
+    **overrides,
 ):
     manifest = manifest or _manifest()
     contract = contract or _contract(manifest)
-    return run_no_clobber_ope(
-        target,
-        output_identity=contract.output_namespace,
-        contract=contract,
-        input_manifest=manifest,
-        observed_inputs=observations or _observations(manifest),
-        population_positivity_evidence=_positivity_evidence(),
-        analysis_timestamp="2026-10-02T00:00:00+09:00",
-        created_at="2026-10-02T00:00:01+09:00",
-        row_evidence=rows or _rows(),
-        estimation_evidence=estimation or _estimation_evidence(),
-        collection_complete=collection_complete,
-        label_snapshot_digest=label_snapshot_digest,
-        successful_execution_ids=("local-run-001",),
-        peak_memory_mb=128,
-        no_matching_execution_verified=True,
-    )
+    values = {
+        "output_identity": getattr(contract, "output_namespace", "invalid"),
+        "contract": contract,
+        "input_manifest": manifest,
+        "observed_inputs": observations or _observations(manifest),
+        "population_positivity_evidence": _positivity_evidence(),
+        "analysis_timestamp": "2026-10-02T00:00:00+09:00",
+        "created_at": "2026-10-02T00:00:01+09:00",
+        "row_evidence": rows or _rows(),
+        "estimation_evidence": estimation or _estimation_evidence(),
+        "collection_complete": collection_complete,
+        "label_snapshot_digest": label_snapshot_digest,
+        "successful_execution_ids": ("local-run-001",),
+        "peak_memory_mb": 128,
+        "no_matching_execution_verified": True,
+    }
+    values.update(overrides)
+    return run_no_clobber_ope(target, **values)
 
 
 def test_runner_publishes_full_support_point_ope(tmp_path: Path) -> None:
@@ -89,6 +92,28 @@ def test_runner_publishes_full_support_point_ope(tmp_path: Path) -> None:
     assert result.output_directory == str(target)
     assert not result.production_rollout_authorized
     assert (target / "complete.json").is_file()
+    assert result.to_dict()["state"] == "artifact_complete"
+
+
+def test_runner_rejects_missing_fields_and_invalid_public_arguments(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="required evaluation field"):
+        _require({}, "missing")
+    with pytest.raises(ValueError, match="attestation must be boolean"):
+        _attestation({"flag": 1}, "flag")
+
+    manifest = _manifest()
+    contract = _contract(manifest)
+    cases = [
+        ({"contract": "bad"}, "untampered"),
+        ({"output_identity": "wrong"}, "output identity"),
+        ({"collection_complete": "yes"}, "must be boolean"),
+    ]
+    for index, (overrides, message) in enumerate(cases):
+        with pytest.raises(ValueError, match=message):
+            _run(tmp_path / f"invalid-{index}", **overrides)
+
+    with pytest.raises(ValueError, match="parent directory"):
+        _run(tmp_path / "missing" / "output")
 
 
 def test_freeze_cli_manifest_flows_directly_to_ope_preflight(tmp_path: Path) -> None:

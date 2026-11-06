@@ -40,8 +40,66 @@ jobs:
         run: |
           cargo +"$RUST_VERSION" test --locked --all-targets
           cargo +"$RUST_VERSION" clippy --locked --all-targets -- -D warnings
+          uv run python -c "import safe_slate._core as core; assert not hasattr(core, '_run_coverage_suite')"
       - name: Verify local distributions
         run: |
           uv run maturin build --release --locked --compatibility pypi -i python3.15 --out dist
           uv run maturin sdist --out dist
           uvx --from twine==6.2.0 twine check dist/*
+          uv venv "$RUNNER_TEMP/wheel-check" --python python3.15
+          uv pip install --python "$RUNNER_TEMP/wheel-check/bin/python" --no-deps dist/*.whl
+          "$RUNNER_TEMP/wheel-check/bin/python" -c "import safe_slate._core as core; assert not hasattr(core, '_run_coverage_suite')"
+
+  coverage:
+    runs-on: ubuntu-24.04
+    env:
+      COVERAGE_FILE: coverage/.coverage
+      RUSTUP_TOOLCHAIN: "1.99.0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install fixed coverage toolchains
+        run: |
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component clippy
+          rustup component add llvm-tools-preview --toolchain "$RUST_VERSION"
+          python -m pip install --disable-pip-version-check uv==0.13.1
+          cargo +"$RUST_VERSION" install cargo-llvm-cov --version 0.9.1 --locked
+          uv sync --frozen --no-install-project
+      - name: Collect Python and Rust coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p coverage
+          cargo llvm-cov clean --workspace
+          eval "$(cargo llvm-cov show-env --sh)"
+          uv run maturin develop
+          uv run coverage run -m pytest
+          uv run python -c "import safe_slate._core as core; core._run_coverage_suite()"
+          uv run coverage report --show-missing | tee coverage/python.txt
+          uv run coverage json -o coverage/python.json
+          uv run coverage xml -o coverage/python.xml
+          uv run coverage html -d coverage/python-html
+          cargo llvm-cov report --show-missing-lines 2>&1 | tee coverage/rust.txt
+          if grep -q "mismatched data" coverage/rust.txt; then
+            echo "Rust coverage profiles are incompatible" >&2
+            exit 1
+          fi
+          cargo llvm-cov report --json --summary-only --output-path coverage/rust.json
+          cargo llvm-cov report --html --output-dir coverage/rust-html
+      - name: Enforce coverage contract
+        run: >-
+          uv run python scripts/check_coverage.py
+          --python-json coverage/python.json
+          --rust-json coverage/rust.json
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-reports
+          path: coverage
+          if-no-files-found: warn
+          retention-days: 14

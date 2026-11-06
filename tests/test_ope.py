@@ -5,7 +5,13 @@ import math
 import pytest
 
 from safe_slate import audit_ope_readiness
-from safe_slate.ope import _audit_ope_readiness
+from safe_slate.ope import (
+    _audit_ope_readiness,
+    _audit_ope_readiness_with_contract,
+    _digest_value,
+    _quantile,
+)
+from test_contract import _contract as _ope_contract, _row_evidence
 
 
 def _base_audit(**overrides: object):
@@ -367,3 +373,120 @@ def test_assessment_serializes_without_authorizing_rollout() -> None:
     assert serialized["user_effective_sample_size"] == pytest.approx(2.0)
     assert serialized["production_rollout_authorized"] is False
     assert serialized["reasons"] == []
+
+
+def test_private_digest_and_quantile_helpers_cover_empty_nonfinite_and_unsupported() -> None:
+    assert _quantile([], 0.5) is None
+    assert _digest_value(math.nan) == "__nonfinite__:nan"
+    assert _digest_value(math.inf) == "__nonfinite__:positive_infinity"
+    assert _digest_value(-math.inf) == "__nonfinite__:negative_infinity"
+    assert _digest_value(object()).startswith("__unsupported__:object")
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"propensity_mode": "unknown"},
+        {"population_positivity_established": 1},
+        {"minimum_raw_requests": 0},
+        {"_evaluation_contract_digest": "bad"},
+        {"fold_ids": [0]},
+        {"outcome_observation_propensities": [1.0]},
+        {"request_ids": ["", "r1", "r2", "r3"]},
+        {"user_ids": ["", "u0", "u1", "u1"]},
+        {"logging_propensities": [0.5]},
+        {
+            "propensity_mode": "interval",
+            "logging_propensities": [0.5] * 4,
+            "logging_propensity_lower": [0.4] * 4,
+            "logging_propensity_upper": [0.6] * 4,
+        },
+        {"propensity_mode": "missing", "logging_propensities": [0.5] * 4},
+    ],
+)
+def test_remaining_structural_readiness_contracts_raise(
+    overrides: dict[str, object]
+) -> None:
+    with pytest.raises(ValueError):
+        _base_audit(**overrides)
+
+
+def test_remaining_fail_closed_readiness_paths() -> None:
+    no_outcomes = _base_audit(
+        purchase_events=[None] * 4,
+        outcome_observation_propensities=[1.0] * 4,
+        maximum_missing_outcome_rate=1.0,
+        minimum_purchase_events=0,
+    )
+    assert "no_analyzable_requests" in no_outcomes.reasons
+
+    missing_folds = _base_audit(fold_ids=None)
+    invalid_folds = _base_audit(fold_ids=[0, True, 1, 1])
+    one_fold = _base_audit(fold_ids=[0, 0, 0, 0])
+    assert "cross_fit_folds_missing" in missing_folds.reasons
+    assert "cross_fit_fold_invalid" in invalid_folds.reasons
+    assert "cross_fit_requires_two_folds" in one_fold.reasons
+
+    invalid_interval = _base_audit(
+        propensity_mode="interval",
+        logging_propensities=None,
+        logging_propensity_lower=[0.6] * 4,
+        logging_propensity_upper=[0.4] * 4,
+    )
+    assert "propensity_invalid" in invalid_interval.reasons
+
+    zero_mass = _base_audit(
+        target_probability_of_logged_action=[0.0] * 4,
+        minimum_user_effective_sample_size=0.1,
+    )
+    assert "zero_target_weight_mass" in zero_mass.reasons
+
+    finite_interval = _base_audit(
+        propensity_mode="interval",
+        logging_propensities=None,
+        logging_propensity_lower=[0.4] * 4,
+        logging_propensity_upper=[0.6] * 4,
+        minimum_user_effective_sample_size=0.5,
+        population_positivity_established=False,
+    )
+    assert finite_interval.authorized_estimand == (
+        "observed_finite_log_propensity_interval_bounds"
+    )
+
+    below_with_failure = _base_audit(
+        guaranteed_target_support_mass=[0.5] * 4,
+        candidate_sets_reconstructable=False,
+    )
+    assert "target_support_below_partial_gate" in below_with_failure.reasons
+
+
+@pytest.mark.parametrize(
+    ("contract", "timestamp", "message"),
+    [
+        ("bad", "2026-10-08T00:00:00+09:00", "untampered"),
+        (None, "not-a-time", "ISO-8601"),
+        (None, "2026-10-08T00:00:00", "timezone"),
+    ],
+)
+def test_contract_bound_readiness_rejects_invalid_contract_and_timestamps(
+    contract, timestamp: str, message: str
+) -> None:
+    value = contract if contract is not None else _ope_contract()
+    with pytest.raises(ValueError, match=message):
+        _audit_ope_readiness_with_contract(
+            value,  # type: ignore[arg-type]
+            analysis_timestamp=timestamp,
+            _population_positivity_verified=False,
+            **_row_evidence(),
+        )
+
+
+def test_contract_bound_readiness_accepts_z_earliest_timestamp() -> None:
+    contract = _ope_contract(earliest_analysis_time="2026-10-07T15:00:00Z")
+    assessment = _audit_ope_readiness_with_contract(
+        contract,
+        analysis_timestamp="2026-10-08T00:00:00+09:00",
+        _population_positivity_verified=False,
+        **_row_evidence(),
+    )
+    assert assessment.evaluation_contract_digest == contract.contract_digest

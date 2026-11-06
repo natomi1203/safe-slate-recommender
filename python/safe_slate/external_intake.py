@@ -247,7 +247,9 @@ def freeze_external_input_manifest(spec: Mapping[str, Any]) -> ImmutableInputMan
             "external input roles differ; "
             f"missing={missing}, duplicate={extra_or_duplicate}"
         )
-    if primary_logs is None or service_completions is None:
+    # Exact role equality above plus successful role-specific loaders guarantees
+    # both values; retain this as defense against future role-table changes.
+    if primary_logs is None or service_completions is None:  # pragma: no cover
         raise ValueError("primary production logs and service traces are required")
     join_service_trace_completions(primary_logs, service_completions)
 

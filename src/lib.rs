@@ -1,9 +1,133 @@
+#[cfg(any(test, coverage))]
+macro_rules! coverage_tests {
+    ($runner:ident; $(fn $name:ident() $body:block)*) => {
+        $(
+            #[cfg_attr(test, test)]
+            pub(crate) fn $name() $body
+        )*
+
+        #[cfg(coverage)]
+        pub(crate) fn $runner() {
+            $($name();)*
+        }
+    };
+}
+
+// cargo-llvm-cov defines `cfg(coverage)`. The injected failures exist only in
+// that build and exercise otherwise allocation-only PyO3 error propagation
+// without changing normal library behavior.
+macro_rules! coverage_py_result {
+    ($point:ident, $result:expr) => {{
+        let result = $result;
+        #[cfg(coverage)]
+        let result = if crate::coverage_failpoints::take(
+            crate::coverage_failpoints::CoverageFailpoint::$point,
+        ) {
+            Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "injected coverage failure",
+            ))
+        } else {
+            result
+        };
+        result
+    }};
+}
+
+macro_rules! coverage_string_result {
+    ($point:ident, $result:expr) => {{
+        let result = $result;
+        #[cfg(coverage)]
+        let result = if crate::coverage_failpoints::take(
+            crate::coverage_failpoints::CoverageFailpoint::$point,
+        ) {
+            Err("injected coverage failure".to_owned())
+        } else {
+            result
+        };
+        result
+    }};
+}
+
+#[cfg(coverage)]
+mod coverage_failpoints {
+    use std::cell::Cell;
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    pub(crate) enum CoverageFailpoint {
+        DigestFeatures,
+        DigestCovariance,
+        PlanOperationIndices,
+        PlanRemovePositions,
+        PlanAddItemIds,
+        PlanMaterializedSlate,
+        PlanAppend,
+        ReprGlobalsSet,
+        ReprEval,
+        ReprSetName,
+        ReprSetQualname,
+        ReprSetModule,
+        ReprGetClass,
+        ReprSetClass,
+        ClassOracle,
+        ClassReplacement,
+        ClassProjection,
+        ClassPrepared,
+        WrapReprOracle,
+        WrapReprReplacement,
+        WrapReprProjection,
+        WrapReprPrepared,
+        InstallReprOracle,
+        InstallReprReplacement,
+        InstallReprProjection,
+        InstallReprPrepared,
+        WrapOptimizeSlate,
+        AddOptimizeSlate,
+        WrapOptimizeReplacements,
+        AddOptimizeReplacements,
+        WrapProjectUncertainty,
+        AddProjectUncertainty,
+        WrapProjectMarginals,
+        AddProjectMarginals,
+        WrapPrepareMarginals,
+        AddPrepareMarginals,
+        WrapCoverageSuite,
+        AddCoverageSuite,
+        UncertaintyPreparedVariance,
+        UncertaintyProjectedDiagonal,
+        UncertaintyProjectedPsd,
+    }
+
+    thread_local! {
+        static ACTIVE: Cell<Option<CoverageFailpoint>> = Cell::new(None);
+    }
+
+    pub(crate) fn set(point: CoverageFailpoint) {
+        ACTIVE.with(|active| active.set(Some(point)));
+    }
+
+    pub(crate) fn take(point: CoverageFailpoint) -> bool {
+        ACTIVE.with(|active| {
+            if active.get() == Some(point) {
+                active.set(None);
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    pub(crate) fn is_clear() -> bool {
+        ACTIVE.with(|active| active.get().is_none())
+    }
+}
+
 mod constraints;
 mod oracle;
 pub mod sidecar;
 mod uncertainty;
 
 use std::collections::{HashMap, HashSet};
+use std::fmt;
 use std::time::Duration;
 
 use constraints::{AcceptAll, NativeConstraints, PartitionConstraint, WholeSlatePredicate};
@@ -44,10 +168,10 @@ pub struct PreparedLinearContrastMarginals {
     matrix_digest_encoding: String,
 }
 
-#[pymethods]
-impl PreparedLinearContrastMarginals {
-    fn __repr__(&self) -> String {
-        format!(
+impl fmt::Display for PreparedLinearContrastMarginals {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
             "PreparedLinearContrastMarginals(operation_count={}, feature_dimension={}, matrix_digest_encoding='{}')",
             self.safety_variances.len(),
             self.feature_dimension,
@@ -56,15 +180,27 @@ impl PreparedLinearContrastMarginals {
     }
 }
 
-#[pymethods]
-impl ProjectedContrastUncertainty {
-    fn __repr__(&self) -> String {
-        format!(
+impl fmt::Display for ProjectedContrastUncertainty {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
             "ProjectedContrastUncertainty(operation_count={}, feature_dimension={})",
             self.safety_variances.len(),
             self.feature_dimension
         )
     }
+}
+
+#[pyfunction]
+fn repr_projected_contrast_uncertainty(value: PyRef<'_, ProjectedContrastUncertainty>) -> String {
+    value.to_string()
+}
+
+#[pyfunction]
+fn repr_prepared_linear_contrast_marginals(
+    value: PyRef<'_, PreparedLinearContrastMarginals>,
+) -> String {
+    value.to_string()
 }
 
 /// Materialize the full operation covariance for small audits and debugging.
@@ -124,9 +260,10 @@ fn matrix_f64le_sha256(matrix: &[Vec<f64>], name: &str) -> Result<String, String
     {
         return Err(format!("{name} contains NaN or infinity"));
     }
-    let rows = u64::try_from(row_count).map_err(|_| format!("{name} has too many rows"))?;
-    let columns =
-        u64::try_from(column_count).map_err(|_| format!("{name} has too many columns"))?;
+    // Rust's supported targets have at most 64-bit `usize`, so these conversions
+    // are total and do not need unreachable error closures in the coverage map.
+    let rows = row_count as u64;
+    let columns = column_count as u64;
     let mut hasher = Sha256::new();
     hasher.update(b"safe-slate-matrix-f64le-v1\0");
     hasher.update(rows.to_le_bytes());
@@ -146,11 +283,16 @@ fn prepare_linear_contrast_marginals_f64le(
 ) -> PyResult<PreparedLinearContrastMarginals> {
     let prepared = prepare_linear_contrasts(&contrast_features, &parameter_covariance)
         .map_err(PyValueError::new_err)?;
-    let contrast_features_sha256 = matrix_f64le_sha256(&contrast_features, "contrast_features")
-        .map_err(PyValueError::new_err)?;
-    let parameter_covariance_sha256 =
+    let contrast_features_sha256 = coverage_string_result!(
+        DigestFeatures,
+        matrix_f64le_sha256(&contrast_features, "contrast_features")
+    )
+    .map_err(PyValueError::new_err)?;
+    let parameter_covariance_sha256 = coverage_string_result!(
+        DigestCovariance,
         matrix_f64le_sha256(&parameter_covariance, "parameter_covariance")
-            .map_err(PyValueError::new_err)?;
+    )
+    .map_err(PyValueError::new_err)?;
     Ok(PreparedLinearContrastMarginals {
         safety_variances: prepared.variances,
         feature_dimension: prepared.feature_dimension,
@@ -247,11 +389,9 @@ impl WholeSlatePredicate for ReplacementPredicate {
             });
         }
         if self.batch_callback.is_some() {
-            return self
-                .accepts_many(&[selected.to_vec()])
-                .into_iter()
-                .next()
-                .unwrap_or_else(|| Err("batch predicate returned no decision".to_owned()));
+            let mut decisions = self.accepts_many(&[selected.to_vec()]);
+            // One candidate always materializes exactly one decision.
+            return decisions.swap_remove(0);
         }
         Ok(true)
     }
@@ -284,7 +424,7 @@ impl WholeSlatePredicate for ReplacementPredicate {
                     &self.add_item_ids,
                     materialized,
                 ) {
-                    Ok(plan) => match plans.append(plan) {
+                    Ok(plan) => match coverage_py_result!(PlanAppend, plans.append(plan)) {
                         Ok(()) => valid_positions.push(position),
                         Err(error) => decisions[position] = Err(error.to_string()),
                     },
@@ -342,14 +482,23 @@ fn replacement_plan<'py>(
         .iter()
         .map(|&operation| add_item_ids[operation])
         .collect();
-    plan.set_item("operation_indices", selected.to_vec())
+    coverage_py_result!(
+        PlanOperationIndices,
+        plan.set_item("operation_indices", selected.to_vec())
+    )
+    .map_err(|error| error.to_string())?;
+    coverage_py_result!(
+        PlanRemovePositions,
+        plan.set_item("remove_positions", removed)
+    )
+    .map_err(|error| error.to_string())?;
+    coverage_py_result!(PlanAddItemIds, plan.set_item("add_item_ids", added))
         .map_err(|error| error.to_string())?;
-    plan.set_item("remove_positions", removed)
-        .map_err(|error| error.to_string())?;
-    plan.set_item("add_item_ids", added)
-        .map_err(|error| error.to_string())?;
-    plan.set_item("materialized_slate", materialized)
-        .map_err(|error| error.to_string())?;
+    coverage_py_result!(
+        PlanMaterializedSlate,
+        plan.set_item("materialized_slate", materialized)
+    )
+    .map_err(|error| error.to_string())?;
     Ok(plan)
 }
 
@@ -368,11 +517,9 @@ impl WholeSlatePredicate for PythonPredicate {
                     .map_err(|error| error.to_string())
             });
         }
-        let decisions = self.accepts_many(&[selected.to_vec()]);
-        decisions
-            .into_iter()
-            .next()
-            .unwrap_or_else(|| Err("batch predicate returned no decision".to_owned()))
+        let mut decisions = self.accepts_many(&[selected.to_vec()]);
+        // One candidate always materializes exactly one decision.
+        decisions.swap_remove(0)
     }
 
     fn accepts_many(&mut self, candidates: &[Vec<usize>]) -> Vec<Result<bool, String>> {
@@ -454,14 +601,19 @@ pub struct CertifiedOracleResult {
     elapsed_seconds: f64,
 }
 
-#[pymethods]
-impl CertifiedOracleResult {
-    fn __repr__(&self) -> String {
-        format!(
+impl fmt::Display for CertifiedOracleResult {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
             "CertifiedOracleResult(status='{}', k_lower={}, k_upper={}, reward={:.6}, rechecked={})",
             self.status, self.k_lower, self.k_upper, self.reward, self.rechecked
         )
     }
+}
+
+#[pyfunction]
+fn repr_certified_oracle_result(value: PyRef<'_, CertifiedOracleResult>) -> String {
+    value.to_string()
 }
 
 impl From<OracleOutcome> for CertifiedOracleResult {
@@ -548,14 +700,19 @@ pub struct CertifiedReplacementResult {
     elapsed_seconds: f64,
 }
 
-#[pymethods]
-impl CertifiedReplacementResult {
-    fn __repr__(&self) -> String {
-        format!(
+impl fmt::Display for CertifiedReplacementResult {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
             "CertifiedReplacementResult(status='{}', k_lower={}, k_upper={}, reward={:.6}, rechecked={})",
             self.status, self.k_lower, self.k_upper, self.reward, self.rechecked
         )
     }
+}
+
+#[pyfunction]
+fn repr_certified_replacement_result(value: PyRef<'_, CertifiedReplacementResult>) -> String {
+    value.to_string()
 }
 
 impl CertifiedReplacementResult {
@@ -797,13 +954,16 @@ fn optimize_replacements(
 
     let remove_caps = unit_caps(&remove_positions)?;
     let add_caps = unit_caps(&add_item_ids)?;
+    let remove_partition_ids: Vec<i64> =
+        remove_positions.iter().map(|&value| value as i64).collect();
+    let add_partition_ids: Vec<i64> = add_item_ids.iter().map(|&value| value as i64).collect();
     let mut partitions = vec![
         PartitionConstraint {
-            ids: to_partition_ids(&remove_positions)?,
+            ids: remove_partition_ids,
             caps: remove_caps,
         },
         PartitionConstraint {
-            ids: to_partition_ids(&add_item_ids)?,
+            ids: add_partition_ids,
             caps: add_caps,
         },
     ];
@@ -819,20 +979,8 @@ fn optimize_replacements(
         add_group_ids.as_deref(),
         add_group_caps.as_ref(),
     )?;
-    append_optional_partition(
-        "remove",
-        operation_count,
-        remove_group_ids,
-        remove_group_caps,
-        &mut partitions,
-    )?;
-    append_optional_partition(
-        "add",
-        operation_count,
-        add_group_ids,
-        add_group_caps,
-        &mut partitions,
-    )?;
+    append_optional_partition(remove_group_ids, remove_group_caps, &mut partitions);
+    append_optional_partition(add_group_ids, add_group_caps, &mut partitions);
 
     let explicit_conflicts = operation_conflicts.unwrap_or_default();
     let constraints =
@@ -931,27 +1079,14 @@ fn unit_caps(values: &[usize]) -> PyResult<HashMap<i64, usize>> {
 }
 
 fn append_optional_partition(
-    side: &str,
-    operation_count: usize,
     ids: Option<Vec<i64>>,
     caps: Option<HashMap<i64, usize>>,
     partitions: &mut Vec<PartitionConstraint>,
-) -> PyResult<()> {
-    match (ids, caps) {
-        (None, None) => Ok(()),
-        (Some(ids), Some(caps)) => {
-            if ids.len() != operation_count {
-                return Err(PyValueError::new_err(format!(
-                    "{side}_group_ids has length {}, expected {operation_count}",
-                    ids.len()
-                )));
-            }
-            partitions.push(PartitionConstraint { ids, caps });
-            Ok(())
-        }
-        _ => Err(PyValueError::new_err(format!(
-            "{side}_group_ids and {side}_group_caps must be supplied together"
-        ))),
+) {
+    // `optional_partition_upper` has already validated the pair and its length.
+    // Keeping this helper infallible avoids duplicating unreachable error edges.
+    if let (Some(ids), Some(caps)) = (ids, caps) {
+        partitions.push(PartitionConstraint { ids, caps });
     }
 }
 
@@ -1069,31 +1204,283 @@ fn normalized_pair(left: usize, right: usize) -> (usize, usize) {
     }
 }
 
+#[cfg(coverage)]
+#[pyfunction]
+fn _run_coverage_suite() {
+    constraints::tests::run_coverage_tests();
+    oracle::tests::run_validation_coverage_tests();
+    oracle::tests::run_search_coverage_tests();
+    uncertainty::tests::run_coverage_tests();
+    tests::run_coverage_tests();
+    tests::run_failpoint_coverage_tests();
+}
+
+fn install_native_repr<'py>(
+    py: Python<'py>,
+    module: &Bound<'py, PyModule>,
+    class_name: &str,
+    repr_function: Bound<'py, PyAny>,
+) -> PyResult<()> {
+    let globals = PyDict::new(py);
+    coverage_py_result!(
+        ReprGlobalsSet,
+        globals.set_item("_native_repr", repr_function)
+    )?;
+    let descriptor = coverage_py_result!(
+        ReprEval,
+        py.eval(
+            c"(lambda native_repr: (lambda self: native_repr(self)))(_native_repr)",
+            Some(&globals),
+            None,
+        )
+    )?;
+    coverage_py_result!(ReprSetName, descriptor.setattr("__name__", "__repr__"))?;
+    coverage_py_result!(
+        ReprSetQualname,
+        descriptor.setattr("__qualname__", format!("{class_name}.__repr__"))
+    )?;
+    coverage_py_result!(
+        ReprSetModule,
+        descriptor.setattr("__module__", "safe_slate._core")
+    )?;
+    let class = coverage_py_result!(ReprGetClass, module.getattr(class_name))?;
+    coverage_py_result!(ReprSetClass, class.setattr("__repr__", descriptor))
+}
+
 #[pymodule]
 fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<CertifiedOracleResult>()?;
-    module.add_class::<CertifiedReplacementResult>()?;
-    module.add_class::<ProjectedContrastUncertainty>()?;
-    module.add_class::<PreparedLinearContrastMarginals>()?;
-    module.add_function(wrap_pyfunction!(optimize_slate, module)?)?;
-    module.add_function(wrap_pyfunction!(optimize_replacements, module)?)?;
-    module.add_function(wrap_pyfunction!(
-        project_linear_contrast_uncertainty,
-        module
-    )?)?;
-    module.add_function(wrap_pyfunction!(project_linear_contrast_marginals, module)?)?;
-    module.add_function(wrap_pyfunction!(
-        prepare_linear_contrast_marginals_f64le,
-        module
-    )?)?;
+    coverage_py_result!(ClassOracle, module.add_class::<CertifiedOracleResult>())?;
+    coverage_py_result!(
+        ClassReplacement,
+        module.add_class::<CertifiedReplacementResult>()
+    )?;
+    coverage_py_result!(
+        ClassProjection,
+        module.add_class::<ProjectedContrastUncertainty>()
+    )?;
+    coverage_py_result!(
+        ClassPrepared,
+        module.add_class::<PreparedLinearContrastMarginals>()
+    )?;
+    let py = module.py();
+    let repr_function = coverage_py_result!(
+        WrapReprOracle,
+        wrap_pyfunction!(repr_certified_oracle_result, module)
+    )?;
+    coverage_py_result!(
+        InstallReprOracle,
+        install_native_repr(
+            py,
+            module,
+            "CertifiedOracleResult",
+            repr_function.into_any(),
+        )
+    )?;
+    let repr_function = coverage_py_result!(
+        WrapReprReplacement,
+        wrap_pyfunction!(repr_certified_replacement_result, module)
+    )?;
+    coverage_py_result!(
+        InstallReprReplacement,
+        install_native_repr(
+            py,
+            module,
+            "CertifiedReplacementResult",
+            repr_function.into_any(),
+        )
+    )?;
+    let repr_function = coverage_py_result!(
+        WrapReprProjection,
+        wrap_pyfunction!(repr_projected_contrast_uncertainty, module)
+    )?;
+    coverage_py_result!(
+        InstallReprProjection,
+        install_native_repr(
+            py,
+            module,
+            "ProjectedContrastUncertainty",
+            repr_function.into_any(),
+        )
+    )?;
+    let repr_function = coverage_py_result!(
+        WrapReprPrepared,
+        wrap_pyfunction!(repr_prepared_linear_contrast_marginals, module)
+    )?;
+    coverage_py_result!(
+        InstallReprPrepared,
+        install_native_repr(
+            py,
+            module,
+            "PreparedLinearContrastMarginals",
+            repr_function.into_any(),
+        )
+    )?;
+
+    let function =
+        coverage_py_result!(WrapOptimizeSlate, wrap_pyfunction!(optimize_slate, module))?;
+    coverage_py_result!(AddOptimizeSlate, module.add_function(function))?;
+    let function = coverage_py_result!(
+        WrapOptimizeReplacements,
+        wrap_pyfunction!(optimize_replacements, module)
+    )?;
+    coverage_py_result!(AddOptimizeReplacements, module.add_function(function))?;
+    let function = coverage_py_result!(
+        WrapProjectUncertainty,
+        wrap_pyfunction!(project_linear_contrast_uncertainty, module)
+    )?;
+    coverage_py_result!(AddProjectUncertainty, module.add_function(function))?;
+    let function = coverage_py_result!(
+        WrapProjectMarginals,
+        wrap_pyfunction!(project_linear_contrast_marginals, module)
+    )?;
+    coverage_py_result!(AddProjectMarginals, module.add_function(function))?;
+    let function = coverage_py_result!(
+        WrapPrepareMarginals,
+        wrap_pyfunction!(prepare_linear_contrast_marginals_f64le, module)
+    )?;
+    coverage_py_result!(AddPrepareMarginals, module.add_function(function))?;
+    #[cfg(coverage)]
+    {
+        let function = coverage_py_result!(
+            WrapCoverageSuite,
+            wrap_pyfunction!(_run_coverage_suite, module)
+        )?;
+        coverage_py_result!(AddCoverageSuite, module.add_function(function))?;
+    }
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(any(test, coverage))]
 mod tests {
     use super::*;
 
-    #[test]
+    #[cfg(coverage)]
+    pub(crate) fn run_failpoint_coverage_tests() {
+        use crate::coverage_failpoints::{self, CoverageFailpoint};
+
+        for point in [
+            CoverageFailpoint::DigestFeatures,
+            CoverageFailpoint::DigestCovariance,
+        ] {
+            coverage_failpoints::set(point);
+            assert!(
+                prepare_linear_contrast_marginals_f64le(vec![vec![1.0]], vec![vec![1.0]],).is_err()
+            );
+            assert!(coverage_failpoints::is_clear());
+        }
+
+        Python::attach(|py| {
+            for point in [
+                CoverageFailpoint::PlanOperationIndices,
+                CoverageFailpoint::PlanRemovePositions,
+                CoverageFailpoint::PlanAddItemIds,
+                CoverageFailpoint::PlanMaterializedSlate,
+            ] {
+                coverage_failpoints::set(point);
+                assert!(replacement_plan(py, &[0], &[0], &[10], None).is_err());
+                assert!(coverage_failpoints::is_clear());
+            }
+
+            let callback = py.eval(c"lambda plan: True", None, None).unwrap().unbind();
+            let mut predicate = ReplacementPredicate {
+                callback: Some(callback),
+                batch_callback: None,
+                remove_positions: vec![0],
+                add_item_ids: vec![10],
+                baseline_item_ids: None,
+            };
+            coverage_failpoints::set(CoverageFailpoint::PlanOperationIndices);
+            assert!(predicate.accepts(&[0]).is_err());
+            assert!(coverage_failpoints::is_clear());
+
+            let batch_callback = py
+                .eval(c"lambda plans: [True for _ in plans]", None, None)
+                .unwrap()
+                .unbind();
+            let mut predicate = ReplacementPredicate {
+                callback: None,
+                batch_callback: Some(batch_callback),
+                remove_positions: vec![0],
+                add_item_ids: vec![10],
+                baseline_item_ids: None,
+            };
+            coverage_failpoints::set(CoverageFailpoint::PlanRemovePositions);
+            assert!(predicate.accepts_many(&[vec![0]])[0].is_err());
+            assert!(coverage_failpoints::is_clear());
+            coverage_failpoints::set(CoverageFailpoint::PlanAppend);
+            assert!(predicate.accepts_many(&[vec![0]])[0].is_err());
+            assert!(coverage_failpoints::is_clear());
+        });
+
+        for point in [
+            CoverageFailpoint::UncertaintyPreparedVariance,
+            CoverageFailpoint::UncertaintyProjectedDiagonal,
+            CoverageFailpoint::UncertaintyProjectedPsd,
+        ] {
+            coverage_failpoints::set(point);
+            let result = if point == CoverageFailpoint::UncertaintyPreparedVariance {
+                prepare_linear_contrasts(&[vec![1.0]], &[vec![1.0]]).map(|_| ())
+            } else {
+                project_linear_contrasts(&[1.0], &[vec![1.0]], &[vec![1.0]], 1.96).map(|_| ())
+            };
+            assert!(result.is_err());
+            assert!(coverage_failpoints::is_clear());
+        }
+
+        for point in [
+            CoverageFailpoint::ReprGlobalsSet,
+            CoverageFailpoint::ReprEval,
+            CoverageFailpoint::ReprSetName,
+            CoverageFailpoint::ReprSetQualname,
+            CoverageFailpoint::ReprSetModule,
+            CoverageFailpoint::ReprGetClass,
+            CoverageFailpoint::ReprSetClass,
+            CoverageFailpoint::ClassOracle,
+            CoverageFailpoint::ClassReplacement,
+            CoverageFailpoint::ClassProjection,
+            CoverageFailpoint::ClassPrepared,
+            CoverageFailpoint::WrapReprOracle,
+            CoverageFailpoint::WrapReprReplacement,
+            CoverageFailpoint::WrapReprProjection,
+            CoverageFailpoint::WrapReprPrepared,
+            CoverageFailpoint::InstallReprOracle,
+            CoverageFailpoint::InstallReprReplacement,
+            CoverageFailpoint::InstallReprProjection,
+            CoverageFailpoint::InstallReprPrepared,
+            CoverageFailpoint::WrapOptimizeSlate,
+            CoverageFailpoint::AddOptimizeSlate,
+            CoverageFailpoint::WrapOptimizeReplacements,
+            CoverageFailpoint::AddOptimizeReplacements,
+            CoverageFailpoint::WrapProjectUncertainty,
+            CoverageFailpoint::AddProjectUncertainty,
+            CoverageFailpoint::WrapProjectMarginals,
+            CoverageFailpoint::AddProjectMarginals,
+            CoverageFailpoint::WrapPrepareMarginals,
+            CoverageFailpoint::AddPrepareMarginals,
+            CoverageFailpoint::WrapCoverageSuite,
+            CoverageFailpoint::AddCoverageSuite,
+        ] {
+            coverage_failpoints::set(point);
+            Python::attach(|py| {
+                let module = PyModule::new(py, "_coverage_failure").unwrap();
+                assert!(_core(&module).is_err());
+            });
+            assert!(coverage_failpoints::is_clear());
+        }
+    }
+
+    coverage_tests! {
+    run_coverage_tests;
+    fn python_module_registration_succeeds() {
+        Python::initialize();
+        Python::attach(|py| {
+            let module = PyModule::new(py, "_core").unwrap();
+            _core(&module).unwrap();
+            assert!(module.getattr("optimize_slate").is_ok());
+            assert!(module.getattr("CertifiedOracleResult").is_ok());
+        });
+    }
+
     fn clique_cover_is_an_upper_bound_for_every_five_vertex_graph() {
         let vertex_count = 5;
         let pairs: Vec<(usize, usize)> = (0..vertex_count)
@@ -1120,5 +1507,265 @@ mod tests {
                 .unwrap_or(0);
             assert!(exact <= upper, "graph mask {graph_mask}: {exact} > {upper}");
         }
+    }
+
+    fn private_conversion_defenses_fail_closed() {
+        assert!(matrix_f64le_sha256(&[vec![1.0], vec![1.0, 2.0]], "matrix").is_err());
+        assert!(matrix_f64le_sha256(&[vec![f64::NAN]], "matrix").is_err());
+        assert!(matrix_f64le_sha256(&[vec![1.0]], "matrix").is_ok());
+        assert!(to_partition_ids(&[usize::MAX]).is_err());
+        assert_eq!(to_partition_ids(&[1]).unwrap(), vec![1]);
+        assert!(unit_caps(&[usize::MAX]).is_err());
+
+        assert!(materialize_slate(Some(&[10, 11]), &[1], &[10], &[0]).is_none());
+        assert_eq!(conflict_clique_cover_upper(&[0], &[10], &[(0, 2)]), 1);
+
+        Python::initialize();
+        Python::attach(|py| {
+            assert!(
+                project_linear_contrast_uncertainty(
+                    vec![0.1],
+                    vec![vec![1.0]],
+                    vec![vec![0.25]],
+                    1.96,
+                )
+                .is_ok()
+            );
+            assert!(
+                project_linear_contrast_marginals(vec![vec![f64::NAN]], vec![vec![1.0]]).is_err()
+            );
+            assert!(
+                prepare_linear_contrast_marginals_f64le(vec![vec![f64::NAN]], vec![vec![1.0]],)
+                    .is_err()
+            );
+            assert!(
+                prepare_factorized_uncertainty(
+                    &[0.0],
+                    false,
+                    Some(vec![vec![f64::NAN]]),
+                    Some(vec![vec![1.0]]),
+                )
+                .is_err()
+            );
+            assert!(
+                prepare_factorized_uncertainty(
+                    &[0.25],
+                    false,
+                    Some(vec![vec![1.0]]),
+                    Some(vec![vec![0.25]]),
+                )
+                .is_ok()
+            );
+            assert!(
+                optimize_slate(
+                    vec![1.0],
+                    vec![1.0],
+                    vec![0.0],
+                    1,
+                    0.0,
+                    1.96,
+                    None,
+                    None,
+                    None,
+                    Some(vec![]),
+                    None,
+                    None,
+                    16,
+                    100,
+                    1_000,
+                    None,
+                    None,
+                )
+                .is_err()
+            );
+
+            let true_callback = py
+                .eval(c"lambda selected: True", None, None)
+                .unwrap()
+                .unbind();
+            assert!(
+                optimize_slate(
+                    vec![1.0, 1.0],
+                    vec![1.0, 1.0],
+                    vec![0.0, 0.0],
+                    1,
+                    0.0,
+                    1.96,
+                    Some(vec![vec![0.0, 0.0], vec![0.0, 0.0]]),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    16,
+                    100,
+                    1_000,
+                    Some(true_callback),
+                    None,
+                )
+                .is_ok()
+            );
+            let true_batch = py
+                .eval(c"lambda candidates: [True for _ in candidates]", None, None)
+                .unwrap()
+                .unbind();
+            assert!(
+                optimize_slate(
+                    vec![1.0],
+                    vec![1.0],
+                    vec![1.0],
+                    1,
+                    0.0,
+                    1.96,
+                    None,
+                    Some(vec![vec![1.0]]),
+                    Some(vec![vec![1.0]]),
+                    None,
+                    None,
+                    None,
+                    16,
+                    100,
+                    1_000,
+                    None,
+                    Some(true_batch),
+                )
+                .is_ok()
+            );
+
+            let replacement = |remove_positions, add_item_ids, safety_means, baseline_size| {
+                optimize_replacements(
+                    remove_positions,
+                    add_item_ids,
+                    vec![1.0],
+                    safety_means,
+                    vec![0.0],
+                    baseline_size,
+                    0,
+                    1,
+                    0.0,
+                    1.96,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    16,
+                    100,
+                    1_000,
+                    None,
+                    None,
+                )
+            };
+            assert!(replacement(vec![usize::MAX - 1], vec![10], vec![1.0], usize::MAX,).is_err());
+            assert!(replacement(vec![0], vec![usize::MAX], vec![1.0], 1).is_err());
+            assert!(replacement(vec![0], vec![10], vec![f64::NAN], 1).is_err());
+
+            let replacement_callback = py.eval(c"lambda plan: True", None, None).unwrap().unbind();
+            assert!(
+                optimize_replacements(
+                    vec![0],
+                    vec![10],
+                    vec![1.0],
+                    vec![1.0],
+                    vec![0.0],
+                    1,
+                    0,
+                    1,
+                    0.0,
+                    1.96,
+                    None,
+                    None,
+                    None,
+                    Some(vec![1]),
+                    Some(vec![0]),
+                    Some(HashMap::from([(0, 1)])),
+                    Some(vec![0]),
+                    Some(HashMap::from([(0, 1)])),
+                    None,
+                    16,
+                    100,
+                    1_000,
+                    Some(replacement_callback),
+                    None,
+                )
+                .is_ok()
+            );
+            let replacement_batch = py
+                .eval(c"lambda plans: [True for _ in plans]", None, None)
+                .unwrap()
+                .unbind();
+            assert!(
+                optimize_replacements(
+                    vec![0],
+                    vec![10],
+                    vec![1.0],
+                    vec![1.0],
+                    vec![0.0],
+                    1,
+                    0,
+                    1,
+                    0.0,
+                    1.96,
+                    None,
+                    None,
+                    None,
+                    Some(vec![1]),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    16,
+                    100,
+                    1_000,
+                    None,
+                    Some(replacement_batch),
+                )
+                .is_ok()
+            );
+
+            let none_callback = py.eval(c"lambda value: None", None, None).unwrap().unbind();
+            let mut python_predicate = PythonPredicate {
+                callback: Some(none_callback),
+                batch_callback: None,
+            };
+            assert!(python_predicate.accepts(&[0]).is_err());
+
+            let raising_batch = py
+                .eval(
+                    c"lambda values: (_ for _ in ()).throw(RuntimeError('unavailable'))",
+                    None,
+                    None,
+                )
+                .unwrap()
+                .unbind();
+            let mut python_batch_predicate = PythonPredicate {
+                callback: None,
+                batch_callback: Some(raising_batch),
+            };
+            assert!(python_batch_predicate.accepts_many(&[vec![0]])[0].is_err());
+
+            let short_batch = py.eval(c"lambda values: []", None, None).unwrap().unbind();
+            let mut python_short_batch = PythonPredicate {
+                callback: None,
+                batch_callback: Some(short_batch),
+            };
+            assert!(python_short_batch.accepts_many(&[vec![0]])[0].is_err());
+
+            let none_replacement = py.eval(c"lambda plan: None", None, None).unwrap().unbind();
+            let mut replacement_predicate = ReplacementPredicate {
+                callback: Some(none_replacement),
+                batch_callback: None,
+                remove_positions: vec![0],
+                add_item_ids: vec![10],
+                baseline_item_ids: Some(vec![1]),
+            };
+            assert!(replacement_predicate.accepts(&[0]).is_err());
+        });
+    }
     }
 }

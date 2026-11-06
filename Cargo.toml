@@ -29,6 +29,9 @@ tonic-build = "0.12.3"
 name = "safe-slate-sidecar"
 path = "src/bin/safe_slate_sidecar.rs"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(coverage)"] }
+
 [profile.release]
 lto = "thin"
 codegen-units = 1
