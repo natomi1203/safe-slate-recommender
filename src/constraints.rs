@@ -162,12 +162,12 @@ impl NativeConstraints {
     }
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(any(test, feature = "coverage-internals"))]
+pub(crate) mod tests {
     use super::*;
 
-    #[test]
-    fn native_constraints_reject_conflicts_and_group_overflow() {
+    #[cfg_attr(test, test)]
+    pub(crate) fn native_constraints_reject_conflicts_and_group_overflow() {
         let constraints = NativeConstraints::new(
             4,
             Some(vec![0, 0, 1, 1]),
@@ -182,8 +182,8 @@ mod tests {
         assert!(!constraints.accepts(&[0, 0]));
     }
 
-    #[test]
-    fn multiple_partitions_enforce_remove_and_add_uniqueness() {
+    #[cfg_attr(test, test)]
+    pub(crate) fn multiple_partitions_enforce_remove_and_add_uniqueness() {
         let constraints = NativeConstraints::with_partitions(
             4,
             vec![
@@ -205,8 +205,8 @@ mod tests {
         assert!(!constraints.accepts(&[1, 2]));
     }
 
-    #[test]
-    fn malformed_constraints_fail_closed_and_conflicts_are_normalized() {
+    #[cfg_attr(test, test)]
+    pub(crate) fn malformed_constraints_fail_closed_and_conflicts_are_normalized() {
         assert!(NativeConstraints::new(2, Some(vec![0]), HashMap::new(), vec![]).is_err());
         assert!(NativeConstraints::new(2, None, HashMap::from([(0, 1)]), vec![]).is_err());
         assert!(NativeConstraints::new(2, None, HashMap::new(), vec![(0, 2)]).is_err());

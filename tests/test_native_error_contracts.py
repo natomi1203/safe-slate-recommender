@@ -167,6 +167,14 @@ def test_replacement_batch_predicate_failures_are_fail_closed() -> None:
         assert result.predicate_errors > 0
         assert result.rechecked
 
+    kwargs = _replacement_kwargs()
+    kwargs["custom_predicate"] = lambda _plan: (_ for _ in ()).throw(
+        RuntimeError("unavailable")
+    )
+    result = optimize_replacements(**kwargs)
+    assert result.status == "baseline"
+    assert result.predicate_errors > 0
+
 
 def test_replacement_batch_skips_every_duplicate_materialization() -> None:
     result = optimize_replacements(
@@ -193,4 +201,36 @@ def test_replacement_wrapper_rejects_bad_factorized_uncertainty() -> None:
         parameter_covariance=[[2.0]],
     )
     with pytest.raises(ValueError, match="diagonal must match"):
+        optimize_replacements(**kwargs)
+
+
+def test_native_tie_breaking_and_deep_psd_paths_are_exercised() -> None:
+    tied = optimize_slate(
+        rewards=[1.0, 1.0],
+        safety_means=[1.0, 1.0],
+        safety_variances=[0.0, 0.0],
+        max_items=1,
+    )
+    assert tied.selected_indices == [0]
+
+    projection = project_linear_contrast_uncertainty(
+        safety_means=[1.0, 1.0, 1.0],
+        contrast_features=[
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+        parameter_covariance=[
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+    )
+    assert projection.safety_variances == [1.0, 1.0, 1.0]
+
+
+def test_partition_identifier_overflow_fails_closed() -> None:
+    kwargs = _replacement_kwargs()
+    kwargs["add_item_ids"] = [2**63, 101]
+    with pytest.raises(ValueError, match="partition identifier"):
         optimize_replacements(**kwargs)

@@ -34,7 +34,7 @@ def _python_report(
 
 
 def _rust_report(
-    *, lines: float = 90.0, functions: float = 90.0, regions: float = 90.0
+    *, lines: float = 100.0, functions: float = 100.0, regions: float = 100.0
 ) -> dict[str, object]:
     return {
         "type": "llvm.coverage.json.export",
@@ -65,7 +65,7 @@ def test_one_hundredth_below_global_thresholds_fails() -> None:
         _python_report(statements=89.99, branches=79.99), {PYTHON_FILE}
     )
     rust_failures, _ = coverage_gate.evaluate_rust_report(
-        _rust_report(lines=89.99, functions=89.99, regions=89.99)
+        _rust_report(lines=99.99, functions=99.99, regions=99.99)
     )
     failures = [*python_failures, *rust_failures]
     assert len(failures) == 5

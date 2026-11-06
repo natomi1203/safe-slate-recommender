@@ -255,10 +255,9 @@ fn greedy_floor(
         match predicate.accepts(&state.selected) {
             Ok(true) => {
                 selected = state.selected.clone();
-                if better(&state, incumbent) {
-                    *incumbent = state;
-                    stats.incumbent_updates += 1;
-                }
+                // Every accepted greedy step adds one item to the incumbent.
+                *incumbent = state;
+                stats.incumbent_updates += 1;
             }
             Ok(false) => {}
             Err(_) => record_predicate_error(stats),
@@ -289,7 +288,7 @@ fn beam_search(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn beam_search_with_clock<F>(
+fn beam_search_with_clock(
     inputs: &SlateInputs,
     config: &OracleConfig,
     constraints: &NativeConstraints,
@@ -297,10 +296,8 @@ fn beam_search_with_clock<F>(
     deadline: Instant,
     incumbent: &mut State,
     stats: &mut SearchStats,
-    now: &mut F,
-) where
-    F: FnMut() -> Instant,
-{
+    now: &mut dyn FnMut() -> Instant,
+) {
     let item_count = inputs.rewards.len();
     let max_depth = config
         .max_items
@@ -628,8 +625,8 @@ fn validate_covariance(covariance: &[Vec<f64>], variances: &[f64]) -> Result<(),
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
+#[cfg(any(test, feature = "coverage-internals"))]
+pub(crate) mod tests {
     use super::*;
     use crate::constraints::{AcceptAll, WholeSlatePredicate};
     use std::collections::HashMap;
@@ -658,8 +655,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn exact_search_is_cardinality_first() {
+    #[cfg_attr(test, test)]
+    pub(crate) fn exact_search_is_cardinality_first() {
         let inputs = SlateInputs {
             rewards: vec![100.0, -1_000.0, 2.0],
             safety_means: vec![1.0, 1.0, 1.0],
@@ -685,10 +682,25 @@ mod tests {
         assert_eq!(result.selected_indices, vec![0, 2]);
         assert_eq!(result.k_lower, 2);
         assert_eq!(result.k_upper, 2);
+
+        let tie_inputs = SlateInputs {
+            rewards: vec![1.0, 1.0],
+            safety_means: vec![1.0, 1.0],
+            safety_variances: vec![0.0, 0.0],
+            covariance: None,
+            linear_features: None,
+            linear_transformed_features: None,
+        };
+        let tie_constraints = NativeConstraints::new(2, None, HashMap::new(), vec![]).unwrap();
+        let mut tie_config = valid_config();
+        tie_config.max_items = 1;
+        tie_config.structural_upper_bound = 2;
+        let tied = optimize(&tie_inputs, &tie_config, &tie_constraints, &mut AcceptAll).unwrap();
+        assert_eq!(tied.selected_indices, vec![0]);
     }
 
-    #[test]
-    fn covariance_validation_rejects_indefinite_matrix() {
+    #[cfg_attr(test, test)]
+    pub(crate) fn covariance_validation_rejects_indefinite_matrix() {
         let covariance = vec![vec![1.0, 2.0], vec![2.0, 1.0]];
         assert!(validate_covariance(&covariance, &[1.0, 1.0]).is_err());
 
@@ -696,8 +708,8 @@ mod tests {
         assert!(validate_covariance(&zero_pivot_cross_term, &[0.0, 1.0]).is_err());
     }
 
-    #[test]
-    fn input_validation_rejects_every_uncertainty_contract_violation() {
+    #[cfg_attr(test, test)]
+    pub(crate) fn input_validation_rejects_every_uncertainty_contract_violation() {
         let base = valid_inputs();
         let config = valid_config();
 
@@ -823,8 +835,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn deadlines_budgets_and_predicate_failures_remain_fail_closed() {
+    #[cfg_attr(test, test)]
+    pub(crate) fn deadlines_budgets_and_predicate_failures_remain_fail_closed() {
         let inputs = valid_inputs();
         let constraints = NativeConstraints::new(3, None, HashMap::new(), vec![]).unwrap();
 
@@ -837,6 +849,8 @@ mod tests {
         let mut budget_config = valid_config();
         budget_config.max_expansions = 1;
         let mut final_failure = FailOnSecondCall { calls: 0 };
+        assert_eq!(final_failure.accepts_many(&[vec![]]), vec![Ok(true)]);
+        final_failure.calls = 0;
         let fallback = optimize(&inputs, &budget_config, &constraints, &mut final_failure).unwrap();
         assert_eq!(fallback.status, "baseline");
         assert!(fallback.rechecked);

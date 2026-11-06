@@ -72,9 +72,9 @@ jobs:
           mkdir -p coverage
           cargo llvm-cov clean --workspace
           eval "$(cargo llvm-cov show-env --sh)"
-          uv run maturin develop
+          uv run maturin develop --features pyo3/extension-module,coverage-internals
           uv run coverage run -m pytest
-          cargo test --locked --all-targets
+          uv run python -c "import safe_slate._core as core; core._run_coverage_suite()"
           uv run coverage report --show-missing | tee coverage/python.txt
           uv run coverage json -o coverage/python.json
           uv run coverage xml -o coverage/python.xml
