@@ -10,7 +10,7 @@ its immutable provenance from source revision
 `1a8b4290755f00c1fb78a69602af336ebe7e7742`; relicensing the reusable software
 does not modify that frozen revision.
 
-The repository-level research papers, evidence, protocols, and publication
-artifacts outside this distribution remain under the repository's
-CC-BY-4.0 license unless their own directory states otherwise. The Apache-2.0
-license in this directory does not broaden or replace those research licenses.
+The research papers, evidence, protocols, and publication artifacts retained
+in the source research repository remain under that repository's CC-BY-4.0
+license unless their own directory states otherwise. The Apache-2.0 license in
+this repository does not broaden or replace those research licenses.

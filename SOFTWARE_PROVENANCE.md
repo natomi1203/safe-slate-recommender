@@ -1,8 +1,9 @@
 # Software split provenance
 
-This reusable distribution is extracted from the PR #8 research freeze
-`1a8b4290755f00c1fb78a69602af336ebe7e7742` under tag
-`pr8-research-freeze-2026-11-06`.
+This reusable distribution is extracted from the
+[`purchase-aware-retrieval-research`](https://github.com/natomi1203/purchase-aware-retrieval-research)
+PR #8 research freeze `1a8b4290755f00c1fb78a69602af336ebe7e7742`
+under tag `pr8-research-freeze-2026-11-06`.
 
 It contains the stable Python API, typed package marker, Rust backend, API and
 integration tests, compatibility checks, and reusable evidence/serving
