@@ -100,11 +100,16 @@ pub fn project_linear_contrasts(
     let feature_dimension = prepared.feature_dimension;
     let operation_count = contrast_features.len();
     let mut covariance = vec![vec![0.0; operation_count]; operation_count];
-    for left in 0..operation_count {
-        for right in left..operation_count {
-            let value = contrast_features[left]
+    for (left, left_features) in contrast_features.iter().enumerate() {
+        for (right, right_transformed_features) in prepared
+            .transformed_features
+            .iter()
+            .enumerate()
+            .skip(left)
+        {
+            let value = left_features
                 .iter()
-                .zip(&prepared.transformed_features[right])
+                .zip(right_transformed_features)
                 .map(|(feature, transformed_feature)| feature * transformed_feature)
                 .sum::<f64>();
             covariance[left][right] = value;
@@ -157,12 +162,12 @@ pub(crate) fn validate_symmetric_psd(matrix: &[Vec<f64>], name: &str) -> Result<
         .map(|value| value.abs())
         .fold(1.0_f64, f64::max);
     let tolerance = 1e-10 * scale;
-    for index in 0..size {
-        if matrix[index][index] < -tolerance {
+    for (index, row) in matrix.iter().enumerate() {
+        if row[index] < -tolerance {
             return Err(format!("{name} has a negative diagonal entry"));
         }
-        for other in (index + 1)..size {
-            if (matrix[index][other] - matrix[other][index]).abs() > tolerance {
+        for (other, other_row) in matrix.iter().enumerate().skip(index + 1) {
+            if (row[other] - other_row[index]).abs() > tolerance {
                 return Err(format!("{name} must be symmetric"));
             }
         }

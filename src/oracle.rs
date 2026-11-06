@@ -557,15 +557,15 @@ fn validate_covariance(covariance: &[Vec<f64>], variances: &[f64]) -> Result<(),
             return Err("covariance contains NaN or infinity".to_owned());
         }
     }
-    for index in 0..size {
-        if covariance[index][index] < -tolerance {
+    for (index, (row, variance)) in covariance.iter().zip(variances).enumerate() {
+        if row[index] < -tolerance {
             return Err("covariance has a negative diagonal entry".to_owned());
         }
-        if (covariance[index][index] - variances[index]).abs() > tolerance {
+        if (row[index] - variance).abs() > tolerance {
             return Err("covariance diagonal must match safety_variances".to_owned());
         }
-        for other in (index + 1)..size {
-            if (covariance[index][other] - covariance[other][index]).abs() > tolerance {
+        for (other, other_row) in covariance.iter().enumerate().skip(index + 1) {
+            if (row[other] - other_row[index]).abs() > tolerance {
                 return Err("covariance must be symmetric".to_owned());
             }
         }
