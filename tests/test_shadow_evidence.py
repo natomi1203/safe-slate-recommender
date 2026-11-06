@@ -18,6 +18,13 @@ from safe_slate import (
     matrix_sha256,
     run_no_clobber_shadow_evaluation,
     verify_shadow_evidence_bundle,
+    audit_input_manifest_observations,
+)
+from safe_slate.shadow_evidence import (
+    ShadowEvidenceVerification,
+    _summarize,
+    _validate_contract_binding,
+    _write_bundle,
 )
 from test_shadow import _shadow_log
 from test_shadow_contract import _contract
@@ -196,6 +203,33 @@ def _rewrite_artifact(target: Path, filename: str, payload: dict[str, object]) -
     completion["manifest_byte_size"] = len(manifest_bytes)
     completion["manifest_sha256"] = sha256(manifest_bytes).hexdigest()
     completion_path.write_bytes(_canonical(completion))
+
+
+def _rewrite_shadow_manifest(target: Path, manifest: dict[str, object]) -> None:
+    manifest_bytes = _canonical(manifest)
+    (target / "manifest.json").write_bytes(manifest_bytes)
+    completion_path = target / "complete.json"
+    completion = json.loads(completion_path.read_bytes())
+    completion["manifest_byte_size"] = len(manifest_bytes)
+    completion["manifest_sha256"] = sha256(manifest_bytes).hexdigest()
+    completion_path.write_bytes(_canonical(completion))
+
+
+def _shadow_components(**contract_overrides):
+    manifest = _manifest()
+    contract_values = {
+        "input_manifest_digest": manifest.manifest_digest,
+        "minimum_requests": 2,
+        "maximum_oracle_p95_ms": 100.0,
+        "maximum_fallback_rate": 0.0,
+    }
+    contract_values.update(contract_overrides)
+    contract = _contract(
+        **contract_values,
+    )
+    verification = audit_input_manifest_observations(manifest, _observations(manifest))
+    summary = _summarize(contract, [_shadow_log("r0"), _shadow_log("r1")])
+    return manifest, contract, verification, summary
 
 
 def test_shadow_runner_publishes_and_recomputes_source_summary(tmp_path: Path) -> None:
@@ -554,3 +588,280 @@ def test_shadow_contract_binding_rejects_population_cutoff_and_roles(
             manifest=no_shadow,
             contract=no_shadow_contract,
         )
+
+
+def test_shadow_writer_and_binding_reject_remaining_invalid_contracts(
+    tmp_path: Path,
+) -> None:
+    manifest, contract, verification, summary = _shadow_components()
+    with pytest.raises(ValueError, match="contract is invalid"):
+        _validate_contract_binding("bad", manifest)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="manifest is invalid"):
+        _validate_contract_binding(contract, "bad")  # type: ignore[arg-type]
+    mismatched = _contract(input_manifest_digest="0" * 64)
+    with pytest.raises(ValueError, match="digest does not match"):
+        _validate_contract_binding(mismatched, manifest)
+
+    values = {
+        "output_identity": contract.output_namespace,
+        "contract": contract,
+        "input_manifest": manifest,
+        "input_verification": verification,
+        "summary": summary,
+        "evidence_state": "artifact_complete",
+        "created_at": "2026-10-08T00:00:02+09:00",
+        "successful_execution_ids": ("run",),
+        "failed_execution_ids": (),
+        "actual_runtime_seconds": 1.0,
+        "peak_memory_mb": 1,
+    }
+    cases = [
+        ({"created_at": "2026-10-08T00:00:00+09:00"}, "created after"),
+        (
+            {"input_verification": replace(verification, valid=False)},
+            "do not fully verify",
+        ),
+        ({"actual_runtime_seconds": 301.0}, "runtime exceeds"),
+        ({"peak_memory_mb": True}, "must be an integer"),
+        ({"peak_memory_mb": 2_000}, "memory exceeds"),
+        ({"summary": replace(summary, fallback_rate=float("nan"))}, "non-finite"),
+    ]
+    for index, (changes, message) in enumerate(cases):
+        with pytest.raises(ValueError, match=message):
+            _write_bundle(tmp_path / f"invalid-writer-{index}", **{**values, **changes})
+
+    existing = tmp_path / "existing-writer"
+    existing.mkdir()
+    with pytest.raises(FileExistsError):
+        _write_bundle(existing, **values)
+    with pytest.raises(ValueError, match="parent directory"):
+        _write_bundle(tmp_path / "missing" / "bundle", **values)
+
+    capped_manifest, capped_contract, capped_verification, capped_summary = (
+        _shadow_components(maximum_output_bytes=4_500)
+    )
+    with pytest.raises(ValueError, match="byte cap"):
+        _write_bundle(
+            tmp_path / "manifest-overhead-cap",
+            **{
+                **values,
+                "contract": capped_contract,
+                "input_manifest": capped_manifest,
+                "input_verification": capped_verification,
+                "summary": capped_summary,
+            },
+        )
+
+
+def test_shadow_verifier_rejects_marker_manifest_and_artifact_variants(
+    tmp_path: Path,
+) -> None:
+    assert not verify_shadow_evidence_bundle(tmp_path / "missing", logs=[]).valid
+
+    target = tmp_path / "completion-fields"
+    _run(target)
+    completion = json.loads((target / "complete.json").read_bytes())
+    completion["extra"] = True
+    (target / "complete.json").write_bytes(_canonical(completion))
+    assert "completion fields" in verify_shadow_evidence_bundle(target, logs=[]).reasons[0]
+
+    target = tmp_path / "completion-state"
+    _run(target)
+    completion = json.loads((target / "complete.json").read_bytes())
+    completion["state"] = "partial"
+    (target / "complete.json").write_bytes(_canonical(completion))
+    assert "marker is not complete" in verify_shadow_evidence_bundle(target, logs=[]).reasons[0]
+
+    target = tmp_path / "marker-mismatch"
+    _run(target)
+    completion = json.loads((target / "complete.json").read_bytes())
+    completion["manifest_byte_size"] += 1
+    (target / "complete.json").write_bytes(_canonical(completion))
+    assert "manifest marker mismatch" in verify_shadow_evidence_bundle(target, logs=[]).reasons[0]
+
+    target = tmp_path / "manifest-fields"
+    _run(target)
+    manifest = json.loads((target / "manifest.json").read_bytes())
+    manifest["extra"] = True
+    _rewrite_shadow_manifest(target, manifest)
+    assert "manifest fields" in verify_shadow_evidence_bundle(target, logs=[]).reasons[0]
+
+    target = tmp_path / "artifact-count"
+    _run(target)
+    completion = json.loads((target / "complete.json").read_bytes())
+    completion["artifact_count"] += 1
+    (target / "complete.json").write_bytes(_canonical(completion))
+    assert "artifact count" in verify_shadow_evidence_bundle(target, logs=[]).reasons[0]
+
+    for field, value, message in [
+        ("filename", "manifest.json", "artifact name"),
+        ("role", "unknown", "artifact role"),
+        ("sha256", "0" * 64, "artifact integrity"),
+    ]:
+        target = tmp_path / f"artifact-{field}"
+        _run(target)
+        manifest = json.loads((target / "manifest.json").read_bytes())
+        manifest["artifacts"][0][field] = value
+        _rewrite_shadow_manifest(target, manifest)
+        assert message in verify_shadow_evidence_bundle(target, logs=[]).reasons[0]
+
+    target = tmp_path / "artifact-incomplete"
+    _run(target)
+    manifest = json.loads((target / "manifest.json").read_bytes())
+    manifest["artifacts"] = manifest["artifacts"][:-1]
+    completion = json.loads((target / "complete.json").read_bytes())
+    completion["artifact_count"] = len(manifest["artifacts"])
+    _rewrite_shadow_manifest(target, manifest)
+    (target / "complete.json").write_bytes(_canonical({
+        **json.loads((target / "complete.json").read_bytes()),
+        "artifact_count": len(manifest["artifacts"]),
+    }))
+    assert "artifact manifest is incomplete" in verify_shadow_evidence_bundle(target, logs=[]).reasons[0]
+
+    target = tmp_path / "extra-file"
+    _run(target)
+    (target / "extra.json").write_text("{}")
+    assert "file set" in verify_shadow_evidence_bundle(target, logs=[]).reasons[0]
+
+
+def test_shadow_verifier_rejects_input_and_summary_payload_drift(tmp_path: Path) -> None:
+    target = tmp_path / "input-verification"
+    _run(target)
+    verification = json.loads((target / "input_verification.json").read_bytes())
+    verification["valid"] = False
+    _rewrite_artifact(target, "input_verification.json", verification)
+    assert "input verification is incomplete" in verify_shadow_evidence_bundle(target, logs=[]).reasons[0]
+
+    target = tmp_path / "summary-fields"
+    _run(target)
+    summary = json.loads((target / "summary.json").read_bytes())
+    summary.pop("request_count")
+    _rewrite_artifact(target, "summary.json", summary)
+    assert "summary fields" in verify_shadow_evidence_bundle(target, logs=[]).reasons[0]
+
+    target = tmp_path / "summary-nonfinite"
+    _run(target)
+    summary = json.loads((target / "summary.json").read_bytes())
+    summary["fallback_rate"] = float("nan")
+    data = (json.dumps(summary, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    (target / "summary.json").write_bytes(data)
+    manifest = json.loads((target / "manifest.json").read_bytes())
+    for artifact in manifest["artifacts"]:
+        if artifact["filename"] == "summary.json":
+            artifact["byte_size"] = len(data)
+            artifact["sha256"] = sha256(data).hexdigest()
+    _rewrite_shadow_manifest(target, manifest)
+    assert "invalid numeric" in verify_shadow_evidence_bundle(target, logs=[]).reasons[0]
+
+    target = tmp_path / "factorized-binding"
+    _run(target)
+    assert "factorized uncertainty binding" in verify_shadow_evidence_bundle(
+        target, logs=[_linear_shadow_log("r0"), _linear_shadow_log("r1")]
+    ).reasons[0]
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("schema_version", "2.0", "unsupported shadow evidence schema"),
+        ("evaluation_id", "wrong", "evaluation identity mismatch"),
+        ("contract_digest", "0" * 64, "manifest contract digest mismatch"),
+        ("input_manifest_digest", "0" * 64, "manifest input digest mismatch"),
+        ("log_data_digest", "0" * 64, "manifest log digest mismatch"),
+        ("output_identity", "wrong", "output identity mismatch"),
+        ("evidence_state", "wrong", "evidence state mismatch"),
+        ("operability_pass", False, "operability decision mismatch"),
+        ("created_at", "2026-10-07T00:00:00+09:00", "predates"),
+        ("actual_runtime_seconds", True, "runtime cap exceeded"),
+        ("peak_memory_mb", -1, "memory cap exceeded"),
+        ("safety_flags", [], "safety flags are invalid"),
+        ("successful_execution_ids", [], "execution identities are invalid"),
+    ],
+)
+def test_shadow_verifier_rejects_manifest_semantic_drift(
+    tmp_path: Path, field: str, value: object, message: str
+) -> None:
+    target = tmp_path / field
+    logs = [_shadow_log("r0"), _shadow_log("r1")]
+    _run(target, logs=logs)
+    manifest = json.loads((target / "manifest.json").read_bytes())
+    manifest[field] = value
+    _rewrite_shadow_manifest(target, manifest)
+    assert message in verify_shadow_evidence_bundle(target, logs=logs).reasons[0]
+
+
+def test_shadow_verifier_rejects_oversized_and_postdated_coherent_bundle(
+    tmp_path: Path,
+) -> None:
+    logs = [_shadow_log("r0"), _shadow_log("r1")]
+    target = tmp_path / "oversized"
+    _run(target, logs=logs)
+    summary_data = (target / "summary.json").read_bytes() + b" " * 1_000_000
+    (target / "summary.json").write_bytes(summary_data)
+    manifest_payload = json.loads((target / "manifest.json").read_bytes())
+    for artifact in manifest_payload["artifacts"]:
+        if artifact["filename"] == "summary.json":
+            artifact["byte_size"] = len(summary_data)
+            artifact["sha256"] = sha256(summary_data).hexdigest()
+    _rewrite_shadow_manifest(target, manifest_payload)
+    assert "exceeds output byte cap" in verify_shadow_evidence_bundle(target, logs=logs).reasons[0]
+
+    base = _manifest()
+    late_manifest = create_input_manifest(
+        manifest_id="late-shadow-inputs",
+        population_identity=base.population_identity,
+        created_at="2026-10-09T00:00:00+09:00",
+        feature_cutoff=base.feature_cutoff,
+        label_cutoff=base.label_cutoff,
+        required_roles=base.required_roles,
+        inputs=base.inputs,
+    )
+    contract = _contract(
+        input_manifest_digest=late_manifest.manifest_digest,
+        minimum_requests=2,
+        maximum_oracle_p95_ms=100.0,
+        maximum_fallback_rate=0.0,
+    )
+    verification = audit_input_manifest_observations(
+        late_manifest, _observations(late_manifest)
+    )
+    summary = _summarize(contract, logs)
+    target = tmp_path / "postdated"
+    _run(target, logs=logs)
+    for filename, payload in (
+        ("contract.json", contract.to_dict()),
+        ("input_manifest.json", late_manifest.to_dict()),
+        ("input_verification.json", verification.to_dict()),
+        ("summary.json", summary.to_dict()),
+    ):
+        _rewrite_artifact(target, filename, payload)
+    manifest_payload = json.loads((target / "manifest.json").read_bytes())
+    manifest_payload.update(
+        contract_digest=contract.contract_digest,
+        input_manifest_digest=late_manifest.manifest_digest,
+        log_data_digest=summary.log_data_digest,
+    )
+    _rewrite_shadow_manifest(target, manifest_payload)
+    assert "postdates the bundle" in verify_shadow_evidence_bundle(target, logs=logs).reasons[0]
+
+
+def test_shadow_runner_preserves_verifier_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    rejected = ShadowEvidenceVerification(
+        valid=False,
+        source_recomputed=False,
+        evidence_state="evidence_rejected",
+        contract_digest=None,
+        manifest_digest=None,
+        authorized_actions=(),
+        explicitly_unauthorized=(),
+        reasons=("forced verifier failure",),
+    )
+    monkeypatch.setattr(
+        "safe_slate.shadow_evidence.verify_shadow_evidence_bundle",
+        lambda *args, **kwargs: rejected,
+    )
+    result = _run(tmp_path / "forced-rejection")
+    assert result.state == "evidence_rejected"
+    assert result.reasons == ("forced verifier failure",)

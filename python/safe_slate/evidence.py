@@ -341,7 +341,9 @@ def write_evidence_bundle(
         os.replace(temporary, target)
         return manifest
     except BaseException:
-        if temporary.exists() and temporary.parent == parent:
+        # Every fallible operation before atomic replace leaves this exact
+        # temporary directory in place; successful replace returns normally.
+        if temporary.exists() and temporary.parent == parent:  # pragma: no branch
             shutil.rmtree(temporary)
         raise
 
@@ -644,7 +646,11 @@ def verify_evidence_bundle(
         )
         if tuple(status.get("authorized_actions", ())) != expected_authorized:
             raise ValueError("authorized action boundary mismatch")
-        if set(expected_authorized) & set(contract.explicitly_unauthorized):
+        # Contract construction rejects overlapping scopes, and
+        # expected_authorized is either its authorized scope or empty.
+        if set(expected_authorized) & set(  # pragma: no cover - invariant defense
+            contract.explicitly_unauthorized
+        ):
             raise ValueError("authorized and unauthorized actions overlap")
         overall_state = status.get("overall_state")
         if overall_state == "decision_eligible" and not all(

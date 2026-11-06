@@ -4,7 +4,9 @@ from hashlib import sha256
 import json
 import math
 from pathlib import Path
+import runpy
 import struct
+import sys
 
 import pytest
 
@@ -513,3 +515,80 @@ def test_external_intake_writer_requires_shared_existing_parent(tmp_path: Path) 
             output=output_parent / "manifest.json",
             completion_marker=other_parent / "complete.json",
         )
+
+
+def test_external_intake_accepts_canonical_json_matrices(tmp_path: Path) -> None:
+    spec = _spec(tmp_path)
+    for entry in spec["inputs"]:
+        if entry["semantic_role"] in {
+            "linear_parameter_covariance",
+            "request_contrast_features",
+        }:
+            Path(entry["path"]).write_bytes(canonical_matrix_bytes([[1.0, 0.0]]))
+            entry["schema_version"] = "safe-slate-matrix-json-v1"
+    assert freeze_external_input_manifest(spec).verify_digest()
+
+
+def test_external_intake_rejects_non_mapping_and_embedded_primary_trace(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="spec must be a mapping"):
+        freeze_external_input_manifest([])  # type: ignore[arg-type]
+
+    spec = _spec(tmp_path)
+    candidate = next(
+        entry
+        for entry in spec["inputs"]
+        if entry["semantic_role"] == "candidate_action_log"
+    )
+    completion = next(
+        entry
+        for entry in spec["inputs"]
+        if entry["semantic_role"] == "service_trace_completion"
+    )
+    candidate_payload = json.loads(Path(candidate["path"]).read_text())
+    completion_payload = json.loads(Path(completion["path"]).read_text())
+    candidate_payload["service_latency_trace"] = completion_payload[
+        "service_latency_trace"
+    ]
+    Path(candidate["path"]).write_text(json.dumps(candidate_payload) + "\n")
+    with pytest.raises(ValueError, match="must not embed"):
+        freeze_external_input_manifest(spec)
+
+
+def test_external_intake_rejects_declared_positivity_schema_mismatch(
+    tmp_path: Path,
+) -> None:
+    spec = _spec(tmp_path)
+    positivity = next(
+        entry
+        for entry in spec["inputs"]
+        if entry["semantic_role"] == "population_positivity_evidence"
+    )
+    positivity["schema_version"] = "safe-slate-population-positivity-evidence-2.0"
+    with pytest.raises(ValueError, match="declared schema does not match bytes"):
+        freeze_external_input_manifest(spec)
+
+
+def test_external_intake_module_entrypoint(tmp_path: Path, monkeypatch) -> None:
+    spec = _spec(tmp_path)
+    spec_path = tmp_path / "module-intake.json"
+    spec_path.write_text(json.dumps(spec))
+    output_dir = tmp_path / "module-output"
+    output_dir.mkdir()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "safe_slate.external_intake",
+            "--spec",
+            str(spec_path),
+            "--output",
+            str(output_dir / "manifest.json"),
+            "--completion-marker",
+            str(output_dir / "complete.json"),
+        ],
+    )
+    with pytest.warns(RuntimeWarning, match="found in sys.modules"):
+        runpy.run_module("safe_slate.external_intake", run_name="__main__")
+    assert (output_dir / "complete.json").is_file()

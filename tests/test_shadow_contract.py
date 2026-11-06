@@ -104,3 +104,38 @@ def test_serialized_shadow_contract_tampering_is_rejected() -> None:
 
     tampered = replace(contract, maximum_fallback_rate=0.9)
     assert not tampered.verify_digest()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"evaluation_id": ""}, "non-empty string"),
+        ({"window_start": "not-a-time"}, "ISO-8601"),
+        ({"maximum_fallback_rate": True}, "finite and in"),
+        ({"require_service_latency_trace": "yes"}, "must be boolean"),
+        ({"authorized_scope": ()}, "authorized_scope"),
+        (
+            {"explicitly_unauthorized": ("duplicate", "duplicate")},
+            "explicitly_unauthorized",
+        ),
+    ],
+)
+def test_shadow_contract_rejects_remaining_malformed_contracts(
+    overrides: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _contract(**overrides)
+
+
+def test_shadow_contract_loader_rejects_type_schema_and_protocol_drift() -> None:
+    with pytest.raises(ValueError, match="must be a mapping"):
+        load_shadow_evaluation_contract([])  # type: ignore[arg-type]
+    contract = _contract()
+    missing = contract.to_dict()
+    missing.pop("evaluation_id")
+    with pytest.raises(ValueError, match="fields"):
+        load_shadow_evaluation_contract(missing)
+    protocol = contract.to_dict()
+    protocol["stage_order"] = list(reversed(protocol["stage_order"]))
+    with pytest.raises(ValueError, match="protocol fields"):
+        load_shadow_evaluation_contract(protocol)

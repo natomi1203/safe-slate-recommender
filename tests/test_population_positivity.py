@@ -195,3 +195,114 @@ def test_direct_typed_constructor_rejects_semantically_invalid_rehashed_objects(
             **payload,  # type: ignore[arg-type]
             evidence_digest=evidence_digest,
         )
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"evidence_id": ""}, "non-empty string"),
+        ({"audited_at": "not-a-time"}, "ISO-8601"),
+        ({"audited_at": "2026-10-01T00:00:00"}, "timezone"),
+        (
+            {"minimum_logging_probability_lower_bound": True},
+            "must be in",
+        ),
+        (
+            {"minimum_logging_probability_lower_bound": 0.0},
+            "must be in",
+        ),
+    ],
+)
+def test_legacy_positivity_rejects_remaining_malformed_values(
+    changes: dict[str, object], message: str
+) -> None:
+    values = {
+        "evidence_id": "positivity-v1",
+        "decision": "established",
+        "population_identity": "population-v1",
+        "logging_policy_identity": "logger-v1",
+        "target_policy_identity": "target-v1",
+        "audited_at": "2026-10-01T00:00:00+09:00",
+        "auditor_identity": "auditor",
+        "method": "audit",
+        "minimum_logging_probability_lower_bound": 0.01,
+    }
+    values.update(changes)
+    with pytest.raises(ValueError, match=message):
+        create_population_positivity_evidence(**values)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        ({"schema_version": "wrong"}, "unsupported statistical"),
+        ({"guarantee_kind": "asymptotic"}, "guarantee_kind"),
+        ({"simultaneous_failure_probability": True}, "must lie"),
+        ({"simultaneous_failure_probability": 1.0}, "must lie"),
+    ],
+)
+def test_statistical_positivity_rejects_remaining_malformed_values(
+    changes: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        _statistical_evidence(**changes)
+
+
+def test_positivity_loaders_reject_type_fields_and_digest_tampering() -> None:
+    with pytest.raises(ValueError, match="must be an object"):
+        load_population_positivity_evidence([])  # type: ignore[arg-type]
+
+    legacy = _evidence()
+    missing_legacy = legacy.to_dict()
+    missing_legacy.pop("evidence_id")
+    with pytest.raises(ValueError, match="fields differ"):
+        load_population_positivity_evidence(missing_legacy)
+    bad_legacy_digest = legacy.to_dict()
+    bad_legacy_digest["evidence_digest"] = "0" * 64
+    with pytest.raises(ValueError, match="digest mismatch"):
+        load_population_positivity_evidence(bad_legacy_digest)
+
+    statistical = _statistical_evidence()
+    missing_statistical = statistical.to_dict()
+    missing_statistical.pop("guarantee_kind")
+    with pytest.raises(ValueError, match="fields differ"):
+        load_population_positivity_evidence(missing_statistical)
+    bad_statistical_digest = statistical.to_dict()
+    bad_statistical_digest["evidence_digest"] = "0" * 64
+    with pytest.raises(ValueError, match="digest mismatch"):
+        load_population_positivity_evidence(bad_statistical_digest)
+    assert not replace(statistical, evidence_digest="0" * 64).verify_digest()
+
+
+def test_positivity_file_loader_rejects_duplicate_and_nonfinite_json(
+    tmp_path: Path,
+) -> None:
+    duplicate = tmp_path / "duplicate.json"
+    duplicate.write_text('{"schema_version":"x","schema_version":"y"}')
+    with pytest.raises(ValueError, match="duplicate population positivity key"):
+        load_population_positivity_evidence_file(duplicate)
+
+    nonfinite = tmp_path / "nonfinite.json"
+    nonfinite.write_text('{"value":NaN}')
+    with pytest.raises(ValueError, match="non-finite population positivity"):
+        load_population_positivity_evidence_file(nonfinite)
+
+
+def test_not_established_properties_are_false_for_both_schemas() -> None:
+    legacy = create_population_positivity_evidence(
+        evidence_id="negative-v1",
+        decision="not_established",
+        population_identity="population-v1",
+        logging_policy_identity="logger-v1",
+        target_policy_identity="target-v1",
+        audited_at="2026-09-30T00:00:00+09:00",
+        auditor_identity="auditor",
+        method="audit",
+        minimum_logging_probability_lower_bound=None,
+    )
+    statistical = _statistical_evidence(
+        decision="not_established",
+        minimum_logging_probability_lower_bound=None,
+    )
+    assert not legacy.established
+    assert not statistical.established

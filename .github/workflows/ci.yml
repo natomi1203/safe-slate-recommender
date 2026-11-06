@@ -68,6 +68,7 @@ jobs:
       - name: Collect Python and Rust coverage
         shell: bash
         run: |
+          set -euo pipefail
           mkdir -p coverage
           cargo llvm-cov clean --workspace
           eval "$(cargo llvm-cov show-env --sh)"
@@ -78,7 +79,11 @@ jobs:
           uv run coverage json -o coverage/python.json
           uv run coverage xml -o coverage/python.xml
           uv run coverage html -d coverage/python-html
-          cargo llvm-cov report --show-missing-lines | tee coverage/rust.txt
+          cargo llvm-cov report --show-missing-lines 2>&1 | tee coverage/rust.txt
+          if grep -q "mismatched data" coverage/rust.txt; then
+            echo "Rust coverage profiles are incompatible" >&2
+            exit 1
+          fi
           cargo llvm-cov report --json --summary-only --output-path coverage/rust.json
           cargo llvm-cov report --html --output-dir coverage/rust-html
       - name: Enforce coverage contract

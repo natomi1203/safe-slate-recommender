@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import math
 
 import pytest
@@ -229,3 +230,23 @@ def test_feedback_assessment_serializes_to_json_ready_dict() -> None:
     assert serialized["direct_observed_operation_indices"] == [0, 1, 2]
     assert serialized["maximum_inverse_propensity_weight"] == pytest.approx(10.0)
     assert serialized["reasons"] == []
+
+
+def test_feedback_rejects_invalid_log_type_and_incomplete_primary_log() -> None:
+    with pytest.raises(ValueError, match="ProposalLog"):
+        assess_feedback_coverage(
+            "bad",  # type: ignore[arg-type]
+            direct_observed_operation_indices=[],
+            propensities=[],
+            labels_settled=True,
+            missingness_independent=True,
+        )
+
+    assessment = assess_feedback_coverage(
+        replace(_proposal_log(), proposal_log_complete=False),
+        direct_observed_operation_indices=[0, 1, 2],
+        propensities=[0.5, 0.5, 0.5],
+        labels_settled=True,
+        missingness_independent=True,
+    )
+    assert "proposal_log_incomplete" in assessment.reasons

@@ -64,9 +64,7 @@ pub fn prepare_linear_contrasts(
             .map(|(feature, transformed_feature)| (feature * transformed_feature).abs())
             .sum::<f64>()
             .max(1.0);
-        if variance < -1e-10 * scale {
-            return Err("projected covariance has a negative diagonal entry".to_owned());
-        }
+        validate_projected_variance(variance, 1e-10 * scale)?;
         variances.push(variance.max(0.0));
     }
     Ok(PreparedLinearContrasts {
@@ -101,11 +99,8 @@ pub fn project_linear_contrasts(
     let operation_count = contrast_features.len();
     let mut covariance = vec![vec![0.0; operation_count]; operation_count];
     for (left, left_features) in contrast_features.iter().enumerate() {
-        for (right, right_transformed_features) in prepared
-            .transformed_features
-            .iter()
-            .enumerate()
-            .skip(left)
+        for (right, right_transformed_features) in
+            prepared.transformed_features.iter().enumerate().skip(left)
         {
             let value = left_features
                 .iter()
@@ -124,9 +119,7 @@ pub fn project_linear_contrasts(
         .fold(1.0_f64, f64::max);
     let tolerance = 1e-10 * covariance_scale;
     for (index, row) in covariance.iter_mut().enumerate() {
-        if row[index] < -tolerance {
-            return Err("projected covariance has a negative diagonal entry".to_owned());
-        }
+        validate_projected_variance(row[index], tolerance)?;
         row[index] = prepared.variances[index];
     }
     validate_symmetric_psd(&covariance, "projected covariance")?;
@@ -142,6 +135,16 @@ pub fn project_linear_contrasts(
         individual_lcbs,
         feature_dimension,
     })
+}
+
+// Both callers derive the diagonal as x^T C x after C has passed the symmetric
+// PSD check. A materially negative value is therefore only a numerical-defense
+// path; ordinary and adversarial matrices exercise the validation before it.
+fn validate_projected_variance(value: f64, tolerance: f64) -> Result<(), String> {
+    if value < -tolerance {
+        return Err("projected covariance has a negative diagonal entry".to_owned());
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_symmetric_psd(matrix: &[Vec<f64>], name: &str) -> Result<(), String> {
@@ -240,37 +243,24 @@ mod tests {
     fn malformed_projection_inputs_are_rejected() {
         assert!(prepare_linear_contrasts(&[], &[vec![1.0], vec![0.0]]).is_err());
         assert!(prepare_linear_contrasts(&[vec![]], &[]).is_err());
-        assert!(prepare_linear_contrasts(&[vec![1.0]], &[vec![1.0, 0.0], vec![0.0, 1.0]])
-            .is_err());
-        assert!(prepare_linear_contrasts(
-            &[vec![f64::NAN]],
-            &[vec![1.0]],
-        )
-        .is_err());
-        assert!(prepare_linear_contrasts(&[vec![1.0]], &[vec![f64::INFINITY]])
-            .is_err());
+        assert!(prepare_linear_contrasts(&[vec![1.0]], &[vec![1.0, 0.0], vec![0.0, 1.0]]).is_err());
+        assert!(prepare_linear_contrasts(&[vec![f64::NAN]], &[vec![1.0]],).is_err());
+        assert!(prepare_linear_contrasts(&[vec![1.0]], &[vec![f64::INFINITY]]).is_err());
         assert!(prepare_linear_contrasts(&[vec![1.0]], &[vec![-1.0]]).is_err());
-        assert!(prepare_linear_contrasts(
-            &[vec![1.0, 0.0]],
-            &[vec![1.0, 1.0], vec![0.0, 1.0]],
-        )
-        .is_err());
-        assert!(prepare_linear_contrasts(
-            &[vec![1.0, 0.0]],
-            &[vec![0.0, 1.0], vec![1.0, 1.0]],
-        )
-        .is_err());
+        assert!(
+            prepare_linear_contrasts(&[vec![1.0, 0.0]], &[vec![1.0, 1.0], vec![0.0, 1.0]],)
+                .is_err()
+        );
+        assert!(
+            prepare_linear_contrasts(&[vec![1.0, 0.0]], &[vec![0.0, 1.0], vec![1.0, 1.0]],)
+                .is_err()
+        );
 
-        assert!(project_linear_contrasts(&[0.0], &[vec![1.0]], &[vec![1.0]], -1.0)
-            .is_err());
-        assert!(project_linear_contrasts(&[], &[vec![1.0]], &[vec![1.0]], 1.0)
-            .is_err());
-        assert!(project_linear_contrasts(
-            &[f64::NAN],
-            &[vec![1.0]],
-            &[vec![1.0]],
-            1.0,
-        )
-        .is_err());
+        assert!(project_linear_contrasts(&[0.0], &[vec![1.0]], &[vec![1.0]], -1.0).is_err());
+        assert!(project_linear_contrasts(&[], &[vec![1.0]], &[vec![1.0]], 1.0).is_err());
+        assert!(project_linear_contrasts(&[f64::NAN], &[vec![1.0]], &[vec![1.0]], 1.0,).is_err());
+
+        assert!(validate_symmetric_psd(&[vec![1.0], vec![0.0]], "matrix").is_err());
+        assert!(validate_projected_variance(-1.0, 0.0).is_err());
     }
 }

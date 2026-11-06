@@ -17,11 +17,13 @@ from test_shadow import _shadow_log
 
 def test_proposal_log_round_trips_from_canonical_dictionary() -> None:
     original = _shadow_log("r0")
+    payload = original.to_dict()
+    payload["context"] = {"safe": [None, "value", True, 1, 1.5]}
+    loaded = load_proposal_log(payload)
 
-    loaded = load_proposal_log(original.to_dict())
-
-    assert loaded == original
-    assert loaded.to_dict() == original.to_dict()
+    assert loaded.request_id == original.request_id
+    assert loaded.context == payload["context"]
+    assert loaded.to_dict() == payload
 
 
 def test_complete_service_latency_trace_round_trips() -> None:
@@ -97,6 +99,8 @@ def test_noncanonical_service_latency_trace_is_rejected() -> None:
         ),
         (lambda value: value.update(context={"bad": math.nan}), "JSON object"),
         (lambda value: value.update(context={1: "bad"}), "JSON object"),
+        (lambda value: value.update(context={"bad": [object()]}), "JSON object"),
+        (lambda value: value.update(support_ok=1), "must be boolean"),
     ],
 )
 def test_malformed_proposal_log_is_rejected(mutation, message: str) -> None:

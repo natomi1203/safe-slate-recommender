@@ -117,6 +117,11 @@ def test_default_runtime_evidence_fails_closed() -> None:
     assert result.proposal_log.effective_max_replacements == 0
 
 
+def test_default_max_replacements_uses_the_replaceable_suffix() -> None:
+    result = guarded_candidate_pool_rerank(**_request(max_replacements=None))
+    assert result.proposal_log.requested_max_replacements == 2
+
+
 def test_candidate_conflicts_compile_to_native_operation_conflicts() -> None:
     operations = build_candidate_pool_operations(
         baseline_item_ids=[10, 11, 12, 13],
@@ -203,6 +208,11 @@ def test_candidate_groups_are_expanded_per_operation() -> None:
         ({"max_compiled_conflicts": -1}, "max_compiled_conflicts"),
         ({"parameter_covariance": []}, "must be nonempty"),
         ({"parameter_covariance": [[0.0], [0.0]]}, "row 0"),
+        ({"baseline_features": [[0.0]]}, "baseline_features has 1 rows"),
+        (
+            {"candidate_features": [[float("inf"), 0.0], [0.0, 1.0]]},
+            "finite real",
+        ),
         ({"baseline_reward_scores": [1.0]}, "baseline_reward_scores has length"),
         ({"candidate_safety_means": [float("nan"), 0.1]}, "finite real"),
         ({"candidate_features": [[0.0], [0.0]]}, "candidate_features row"),
@@ -225,6 +235,20 @@ def test_candidate_groups_are_expanded_per_operation() -> None:
             },
             "nonnegative integers",
         ),
+        (
+            {
+                "candidate_group_ids": [True, 8],
+                "add_group_caps": {7: 1, 8: 1},
+            },
+            "must contain integers",
+        ),
+        (
+            {
+                "candidate_group_ids": [7, 8],
+                "add_group_caps": {True: 1, 8: 1},
+            },
+            "keys must be integers",
+        ),
         ({"candidate_conflicts": [(100,)]}, "contain two item ids"),
         ({"candidate_conflicts": [(100, 100)]}, "self-conflicts"),
         ({"candidate_conflicts": [(100, 999)]}, "unknown candidate"),
@@ -234,6 +258,10 @@ def test_candidate_groups_are_expanded_per_operation() -> None:
         ),
         ({"timeout_ms": True}, "timeout_ms"),
         ({"max_replacements": -1}, "max_replacements"),
+        (
+            {"max_replacements": None, "protected_count": True},
+            "protected_count must be an integer",
+        ),
         (
             {"context": {"safe_slate_candidate_pool": {}}},
             "reserved",

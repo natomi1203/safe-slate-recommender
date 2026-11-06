@@ -302,7 +302,9 @@ def build_candidate_pool_operations(
                     min(left_operation, right_operation),
                     max(left_operation, right_operation),
                 )
-                if edge[0] != edge[1]:
+                # Self-conflicts are rejected above and candidate ids are unique,
+                # so distinct pair members cannot compile to the same operation.
+                if edge[0] != edge[1]:  # pragma: no branch - invariant defense
                     compiled_conflicts.add(edge)
                     if len(compiled_conflicts) > max_compiled_conflicts:
                         raise ValueError(

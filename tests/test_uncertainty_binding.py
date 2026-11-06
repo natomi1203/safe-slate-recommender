@@ -435,3 +435,30 @@ def test_uncertainty_binding_validates_public_argument_types() -> None:
                 expected_semantic_role=role,
                 expected_contrast_role=contrast_role,
             )
+
+
+def test_uncertainty_binding_rejects_non_string_time_tampered_manifest_and_missing_model() -> None:
+    manifest, observations = _manifest()
+    log = _proposal_log()
+    for timestamp in (None, ""):
+        assessment = audit_linear_uncertainty_snapshot_binding(
+            replace(log, event_timestamp=timestamp),
+            manifest=manifest,
+            observed_inputs=observations,
+        )
+        assert "proposal_event_timestamp_missing_or_invalid" in assessment.reasons
+
+    tampered_manifest = replace(manifest, manifest_digest="0" * 64)
+    tampered = audit_linear_uncertainty_snapshot_binding(
+        log,
+        manifest=tampered_manifest,
+        observed_inputs=observations,
+    )
+    assert "input_manifest_invalid_or_tampered" in tampered.reasons
+
+    missing_model = audit_linear_uncertainty_snapshot_binding(
+        replace(log, model_version=None),
+        manifest=manifest,
+        observed_inputs=observations,
+    )
+    assert "proposal_model_version_missing" in missing_model.reasons

@@ -818,20 +818,8 @@ fn optimize_replacements(
         add_group_ids.as_deref(),
         add_group_caps.as_ref(),
     )?;
-    append_optional_partition(
-        "remove",
-        operation_count,
-        remove_group_ids,
-        remove_group_caps,
-        &mut partitions,
-    )?;
-    append_optional_partition(
-        "add",
-        operation_count,
-        add_group_ids,
-        add_group_caps,
-        &mut partitions,
-    )?;
+    append_optional_partition(remove_group_ids, remove_group_caps, &mut partitions);
+    append_optional_partition(add_group_ids, add_group_caps, &mut partitions);
 
     let explicit_conflicts = operation_conflicts.unwrap_or_default();
     let constraints =
@@ -930,27 +918,14 @@ fn unit_caps(values: &[usize]) -> PyResult<HashMap<i64, usize>> {
 }
 
 fn append_optional_partition(
-    side: &str,
-    operation_count: usize,
     ids: Option<Vec<i64>>,
     caps: Option<HashMap<i64, usize>>,
     partitions: &mut Vec<PartitionConstraint>,
-) -> PyResult<()> {
-    match (ids, caps) {
-        (None, None) => Ok(()),
-        (Some(ids), Some(caps)) => {
-            if ids.len() != operation_count {
-                return Err(PyValueError::new_err(format!(
-                    "{side}_group_ids has length {}, expected {operation_count}",
-                    ids.len()
-                )));
-            }
-            partitions.push(PartitionConstraint { ids, caps });
-            Ok(())
-        }
-        _ => Err(PyValueError::new_err(format!(
-            "{side}_group_ids and {side}_group_caps must be supplied together"
-        ))),
+) {
+    // `optional_partition_upper` has already validated the pair and its length.
+    // Keeping this helper infallible avoids duplicating unreachable error edges.
+    if let (Some(ids), Some(caps)) = (ids, caps) {
+        partitions.push(PartitionConstraint { ids, caps });
     }
 }
 
@@ -1068,7 +1043,11 @@ fn normalized_pair(left: usize, right: usize) -> (usize, usize) {
     }
 }
 
-#[pymodule]
+// The Python module initializer belongs only to the extension library. Emitting
+// a second `PyInit__core` in the Rust unit-test binary gives LLVM two coverage
+// maps for the same exported symbol and makes otherwise compatible profiles
+// appear mismatched when Python and Rust coverage are merged.
+#[cfg_attr(not(test), pymodule)]
 fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<CertifiedOracleResult>()?;
     module.add_class::<CertifiedReplacementResult>()?;
@@ -1091,6 +1070,17 @@ fn _core(module: &Bound<'_, PyModule>) -> PyResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn python_module_registration_succeeds() {
+        Python::initialize();
+        Python::attach(|py| {
+            let module = PyModule::new(py, "_core").unwrap();
+            _core(&module).unwrap();
+            assert!(module.getattr("optimize_slate").is_ok());
+            assert!(module.getattr("CertifiedOracleResult").is_ok());
+        });
+    }
 
     #[test]
     fn clique_cover_is_an_upper_bound_for_every_five_vertex_graph() {
@@ -1119,5 +1109,14 @@ mod tests {
                 .unwrap_or(0);
             assert!(exact <= upper, "graph mask {graph_mask}: {exact} > {upper}");
         }
+    }
+
+    #[test]
+    fn private_conversion_defenses_fail_closed() {
+        assert!(matrix_f64le_sha256(&[vec![1.0], vec![1.0, 2.0]], "matrix").is_err());
+        assert!(matrix_f64le_sha256(&[vec![f64::NAN]], "matrix").is_err());
+        assert!(to_partition_ids(&[usize::MAX]).is_err());
+
+        assert!(materialize_slate(Some(&[10, 11]), &[1], &[10], &[0]).is_none());
     }
 }

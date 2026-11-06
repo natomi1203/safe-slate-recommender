@@ -166,3 +166,31 @@ def test_replacement_batch_predicate_failures_are_fail_closed() -> None:
         assert result.status == "baseline"
         assert result.predicate_errors > 0
         assert result.rechecked
+
+
+def test_replacement_batch_skips_every_duplicate_materialization() -> None:
+    result = optimize_replacements(
+        remove_positions=[2],
+        add_item_ids=[10],
+        reward_deltas=[1.0],
+        safety_means=[1.0],
+        safety_variances=[0.0],
+        baseline_size=4,
+        protected_count=2,
+        max_replacements=1,
+        baseline_item_ids=[10, 11, 12, 13],
+        custom_predicate_batch=lambda _plans: pytest.fail(
+            "invalid materializations must not reach the callback"
+        ),
+    )
+    assert result.status == "baseline"
+
+
+def test_replacement_wrapper_rejects_bad_factorized_uncertainty() -> None:
+    kwargs = _replacement_kwargs()
+    kwargs.update(
+        contrast_features=[[1.0], [1.0]],
+        parameter_covariance=[[2.0]],
+    )
+    with pytest.raises(ValueError, match="diagonal must match"):
+        optimize_replacements(**kwargs)
