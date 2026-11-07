@@ -5,130 +5,141 @@
 [![Python 3.15](https://img.shields.io/badge/Python-3.15-3776AB.svg?logo=python&logoColor=white)](docs/compatibility.md)
 [![Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**Change the ranking—not the safety contract.**
+## Improve a ranked list without risking the one that already works.
 
-TommySlate is a fail-closed slate re-ranker for Python, powered by a Rust
-search core. It helps recommendation, feed, and search teams improve part of a
-ranked list while protecting the baseline, respecting business constraints,
-and leaving an audit trail.
+TommySlate sits between your ranking model and the final list. Give it the
+current ranking, candidates, business rules, and uncertainty estimates; it
+returns an approved update—or keeps the original list and records why.
 
-When evidence is missing or a final check fails, TommySlate does not guess. It
-returns the unchanged baseline and records why.
+It is a decision layer, not another recommendation model.
 
 ```text
-                         gates fail
-baseline + candidates ───────────────▶ unchanged baseline + reason
-          │
-          └─ gates pass ─▶ bounded search ─▶ final recheck ─▶ safer slate
-                                                   │
-                                                   └─ fails ─▶ baseline
+your ranking model ──▶ current list ──▶ TommySlate ──▶ final list
+                                          │
+                          rules + uncertainty + audit record
 ```
 
-## Why TommySlate?
+## See the decision
 
-| You need to… | TommySlate gives you… |
+| Input | Example |
 | --- | --- |
-| Keep trusted results fixed | Protected prefixes and balanced replacements |
-| Search inside a latency budget | An anytime incumbent with explicit lower/upper certificates |
-| Enforce real slate rules | Group caps, conflicts, and whole-slate predicates |
-| Account for shared model risk | Diagonal, covariance, and factorized uncertainty paths |
-| Fail safely | Baseline fallback, strict validation, and a mandatory final recheck |
-| Explain the decision later | Proposal logs, shadow evidence, and no-clobber OPE artifacts |
+| Current list | `[A, B, C, D]` |
+| Protect | Keep `[A, B]` in place |
+| Candidates | `[X, Y]` |
+| Rules | Change at most 2 positions; satisfy category and safety conditions |
+
+If every check passes, TommySlate can return `[A, B, X, Y]`.
+If a rule or evidence check fails, it returns `[A, B, C, D]` and the reason.
+
+## Three jobs
+
+### Control change
+
+Keep positions fixed, limit how many items may change, and enforce conflicts,
+category caps, and whole-list rules.
+
+### Decide under uncertainty
+
+Use variance or covariance estimates, respect a time budget, and recheck the
+complete result before it can be returned.
+
+### Operate responsibly
+
+Keep the original ranking when approval is not justified, and record the
+decision for audits, shadow evaluation, and offline policy evaluation (OPE).
 
 ## Install
 
-Python 3.15 is required. Add TommySlate with uv:
+TommySlate requires Python 3.15. Add it to a uv-managed project:
 
 ```bash
 uv add tommyslate
 ```
 
-The package has no runtime Python dependencies. Its stable import is
-`safe_slate`.
+The distribution is `tommyslate`; the stable Python import is `safe_slate`.
 
-Migrating from the old distribution name? Replace it rather than installing
-both packages, because both provide the same Python module:
+## Try one decision
 
-```bash
-uv remove safe-slate-recommender
-uv add tommyslate
-```
-
-## See it work
-
-Protect the first two results and safely improve only the remaining positions:
+The example approves two replacements, then shows the same request falling
+back to the original list when its serving evidence is not supplied.
 
 ```python
-from safe_slate import optimize_replacements
+from safe_slate import guarded_rerank
 
-result = optimize_replacements(
-    baseline_item_ids=[10, 11, 12, 13],
-    baseline_size=4,
-    protected_count=2,
-    remove_positions=[2, 2, 3, 3],
-    add_item_ids=[100, 101, 100, 102],
-    reward_deltas=[0.8, 0.7, 0.6, 0.5],
-    safety_means=[0.04, 0.03, 0.02, 0.01],
-    safety_variances=[0.0001] * 4,
+request = dict(
+    request_id="readme-example",
+    baseline_item_ids=[10, 11, 12, 13],       # [A, B, C, D]
+    protected_count=2,                        # protect [A, B]
+    remove_positions=[2, 3],
+    add_item_ids=[100, 101],                  # [X, Y]
+    reward_deltas=[0.8, 0.7],
+    safety_mean_deltas=[0.04, 0.03],
+    safety_variances=[0.0001, 0.0001],
+    baseline_metric=0.5,
+    degradation_tolerance=0.01,
     max_replacements=2,
 )
 
-assert result.rechecked
-assert result.materialized_slate == [10, 11, 100, 102]
-print(result.status, result.k_lower, result.k_upper)  # exact 2 2
+approved = guarded_rerank(
+    **request,
+    support_ok=True,
+    uncertainty_valid=True,
+    distribution_shift_detected=False,
+    proposal_log_complete=True,
+)
+assert approved.slate == (10, 11, 100, 101)
+assert approved.slate[:2] == (10, 11)
+assert approved.oracle.rechecked
+
+kept = guarded_rerank(**request)
+assert kept.slate == (10, 11, 12, 13)
+assert kept.fallback_reason == "support_gate"
+assert kept.oracle.rechecked
 ```
 
-The protected prefix stays untouched. TommySlate chooses a compatible set of
-remove/add operations, maximizes certified replacement count first and reward
-second, then rechecks the materialized slate before returning it.
+## What TommySlate does not do
 
-## Pick the right entry point
+TommySlate does not generate candidates, train or replace your prediction
+model, calibrate uncertainty, prove causal or revenue lift, or authorize a
+production rollout. Your system remains responsible for those inputs and
+claims.
+
+## For engineers
+
+TommySlate is a fail-closed ranked-list optimizer with a Rust search core and
+a typed Python API. The unchanged input list is the baseline; an accepted
+result is a final-rechecked slate with a complete proposal log.
 
 | Goal | Start with |
 | --- | --- |
-| Optimize a new slate | `optimize_slate` |
-| Protect part of an existing slate | `optimize_replacements` |
-| Add fail-closed serving gates | `guarded_rerank` |
-| Expand baseline/candidate arrays into operations | `guarded_candidate_pool_rerank` |
-| Decide whether serving evidence is ready | `assess_serving_gates` |
-| Check OPE inputs before evaluation | `audit_ope_readiness` |
-| Produce immutable evaluation evidence | `run_no_clobber_ope` |
+| Optimize a new list | `optimize_slate` |
+| Protect part of an existing list | `optimize_replacements` |
+| Apply serving gates and audit logging | `guarded_rerank` |
+| Convert candidate arrays into replacement operations | `guarded_candidate_pool_rerank` |
+| Validate serving evidence | `assess_serving_gates` |
+| Check OPE inputs | `audit_ope_readiness` |
+| Write immutable evaluation evidence | `run_no_clobber_ope` |
 
-The [API reference](docs/api-reference.md) defines the stable surface. For a
-guided first run, use the [quickstart](docs/quickstart.md).
-
-## Designed to fail closed
-
-- A failed serving gate returns the registered baseline with a reason.
-- Invalid configuration raises before a decision can be served.
-- A deadline returns only a final-rechecked incumbent—or the baseline.
-- Missing uncertainty, support, or logging evidence never becomes permission.
-- Evidence writers refuse to overwrite an existing destination.
-
-TommySlate validates the decision contract you provide. It does **not** invent
-calibration, prove causal lift, establish population support, or authorize a
-production rollout. Those claims still require evidence from your system.
+Fail-closed means a failed gate returns the registered baseline with a reason.
+Invalid configuration raises before a decision can be served. A deadline
+returns only a rechecked incumbent—or the baseline. Evidence writers refuse
+to overwrite an existing destination.
 
 ## Documentation
 
-- [Quickstart](docs/quickstart.md) — install and make a first certified choice.
+- [Quickstart](docs/quickstart.md) — inputs, decisions, outputs, and a first run.
 - [API reference](docs/api-reference.md) — stable functions and contracts.
-- [Full guide](docs/full-guide.md) — guarded serving, uncertainty, shadow mode,
-  OPE, evidence bundles, and benchmarks.
+- [Full guide](docs/full-guide.md) — uncertainty, shadow mode, OPE, and evidence.
 - [gRPC sidecar](docs/sidecar.md) — loopback deployment and model contract.
-- [Compatibility](docs/compatibility.md) — versions, ABI, platforms, and
-  migration rules.
-- [Research boundary](docs/research-integration.md) — what comes from the
-  author's research, third-party background, and excluded work.
+- [Compatibility](docs/compatibility.md) — Python, ABI, platform, and migration policy.
+- [Research boundary](docs/research-integration.md) — adopted contracts and non-claims.
 
-## Supported release targets
+## Release and development
 
-TommySlate ships CPython stable-ABI wheels for Python 3.15 on Linux x86-64 and
-ARM64, macOS x86-64 and ARM64, and Windows x86-64. Every public release is
-built from one source revision, checked on TestPyPI, matched by SHA-256, and
-reinstalled on all five runners before production promotion.
-
-## Development
+TommySlate provides CPython stable-ABI wheels for Python 3.15 on Linux x86-64
+and ARM64, macOS x86-64 and ARM64, and Windows x86-64. Releases are qualified
+on TestPyPI, matched by SHA-256, and reinstalled on all five runners before
+production promotion.
 
 ```bash
 uv sync --frozen
@@ -136,19 +147,6 @@ uv run maturin develop --release
 uv run pytest
 ```
 
-The Python and Rust coverage gates are 100%. See the
-[full guide](docs/full-guide.md#production-shape-benchmark) for synthetic
-benchmark commands and their claim boundaries.
-
-## Research and license
-
-TommySlate extracts reusable software contracts from
-[`purchase-aware-retrieval-research`](https://github.com/natomi1203/purchase-aware-retrieval-research).
-The [research lineage](docs/research-lineage.json) distinguishes the author's
-adopted contracts from third-party theoretical background and work that is not
-part of the stable API.
-
-The software is Apache-2.0 licensed. Research papers and publication artifacts
-in the source research repository remain CC-BY-4.0. See
-[`CITATION.cff`](CITATION.cff) for citation metadata and
-[`LICENSING.md`](LICENSING.md) for the boundary.
+Python and Rust coverage gates are 100%. The software is Apache-2.0 licensed.
+See [CITATION.cff](CITATION.cff) and [LICENSING.md](LICENSING.md) for research
+lineage, citation metadata, and licensing boundaries.

@@ -15,6 +15,10 @@ def test_tommyslate_distribution_preserves_python_import_contract() -> None:
 
     assert pyproject["project"]["name"] == "tommyslate"
     assert pyproject["project"]["version"] == "0.4.1"
+    assert pyproject["project"]["description"] == (
+        "Safely improve ranked lists—or keep the original—with constraints, "
+        "uncertainty checks, and an audit trail."
+    )
     assert cargo["package"]["name"] == "tommyslate"
     assert cargo["package"]["version"] == "0.4.1"
     assert library["software_id"] == "tommyslate"

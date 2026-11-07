@@ -1,13 +1,17 @@
 # Quickstart
 
-TommySlate requires Python 3.15 or newer. It ships a compiled Rust extension,
-so install a wheel that matches your operating system and CPU. The 0.4.x PyPI
-distribution is named `tommyslate`; its stable import remains `safe_slate`.
+TommySlate sits between your ranking model and the final list. Give it the
+current ranking, candidates, business rules, and uncertainty estimates. It
+returns an approved update—or keeps the original list and records why.
+
+TommySlate is a decision layer, not a candidate generator or prediction model.
+It requires Python 3.15 or newer. The PyPI distribution is `tommyslate`; its
+stable import remains `safe_slate`.
 
 Add the published distribution to a uv-managed project:
 
 ```bash
-uv add "tommyslate==0.4.1"
+uv add tommyslate
 ```
 
 When migrating from `safe-slate-recommender==0.3.1`, replace the distribution;
@@ -15,7 +19,7 @@ do not install both because they provide the same `safe_slate` module:
 
 ```bash
 uv remove safe-slate-recommender
-uv add "tommyslate==0.4.1"
+uv add tommyslate
 ```
 
 The package has no runtime Python dependencies. For a source build, use a
